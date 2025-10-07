@@ -13,7 +13,7 @@ def verify_hash(pw: str, ph: str) -> bool:
     return bcrypt.checkpw(pw.encode(), ph.encode())
 
 def create_token(user_id: int) -> str:
-    payload = {"sub": user_id, "iat": int(time.time())}
+    payload = {"sub": str(user_id), "iat": int(time.time())}
     return jwt.encode(payload, JWT_SECRET, algorithm=JWT_ALG)
 
 def auth_required(creds: HTTPAuthorizationCredentials = Depends(security)) -> int:

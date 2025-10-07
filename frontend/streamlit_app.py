@@ -1,153 +1,176 @@
-# frontend/streamlit_app.py
+import time
 import streamlit as st
-from api_client import register, login, list_users, create_conversation, session_info, send_message, list_messages, rekey_remove
-from crypto_client import generate_rsa_keypair, rsa_decrypt, blowfish_encrypt, blowfish_decrypt
+from api_client import register, login, update_pubkey, list_users, create_conversation, session_info, rotate_key, send_message, list_messages, rekey_remove
+from crypto_client import ensure_rsa_keypair, rsa_decrypt, blowfish_encrypt, blowfish_decrypt
 
-st.set_page_config(page_title="Chat E2EE (RSA+Blowfish)", layout="centered")
+st.set_page_config(page_title="Chat E2EE", layout="centered")
 
-# --- estado ---
 if "priv_pem" not in st.session_state:
     st.session_state.priv_pem = None
 if "pub_pem" not in st.session_state:
     st.session_state.pub_pem = None
 if "token" not in st.session_state:
     st.session_state.token = ""
-if "user" not in st.session_state:
-    st.session_state.user = {"id": None, "username": None}
+if "me" not in st.session_state:
+    st.session_state.me = None
+if "me_id" not in st.session_state:
+    st.session_state.me_id = None
 if "conv_keys" not in st.session_state:
-    # {conv_id: {version: key_bytes}}
     st.session_state.conv_keys = {}
 if "current_conv" not in st.session_state:
     st.session_state.current_conv = None
+if "auto_refresh" not in st.session_state:
+    st.session_state.auto_refresh = True
+if "last_pull" not in st.session_state:
+    st.session_state.last_pull = 0
 
-st.title("🔐 Chat Híbrido (RSA ➜ Blowfish)")
+ensure_rsa_keypair(st.session_state)
 
-# --- seção 1: chaves RSA locais ---
-st.header("1) Minhas chaves RSA (locais)")
-col1, col2 = st.columns(2)
-with col1:
-    if st.button("Gerar par RSA (2048)"):
-        priv, pub = generate_rsa_keypair()
-        st.session_state.priv_pem = priv
-        st.session_state.pub_pem = pub
-        st.success("Gerado! Guarde a privada, ela NÃO sai do seu dispositivo.")
-with col2:
-    if st.session_state.pub_pem:
-        st.download_button("Baixar minha chave privada", st.session_state.priv_pem, file_name="rsa_private.pem")
-st.text_area("Chave pública (envia ao servidor)", st.session_state.pub_pem or "", height=120)
-
-# --- seção 2: registro/login ---
-st.header("2) Registro / Login")
-with st.form("auth"):
-    username = st.text_input("Usuário")
-    password = st.text_input("Senha", type="password")
-    action = st.selectbox("Ação", ["Registrar", "Login"])
-    ok = st.form_submit_button("OK")
-    if ok:
-        try:
-            if action == "Registrar":
-                if not st.session_state.pub_pem:
-                    st.warning("Gere sua RSA e deixe a PÚBLICA preenchida acima.")
-                else:
-                    st.session_state.token = register(username, password, st.session_state.pub_pem)
-                    st.session_state.user = {"id": None, "username": username}
-                    st.success("Registrado e logado!")
-            else:
-                st.session_state.token = login(username, password)
-                st.session_state.user = {"id": None, "username": username}
-                st.success("Logado!")
-        except Exception as e:
-            st.error(f"Erro: {e}")
+st.title("🔐 Chat Seguro")
+with st.container():
+    c1, c2 = st.columns(2)
+    with c1:
+        user = st.text_input("Usuário")
+    with c2:
+        pw = st.text_input("Senha", type="password")
+    c3, c4 = st.columns(2)
+    with c3:
+        if st.button("Entrar"):
+            try:
+                st.session_state.token = login(user, pw)
+                st.session_state.me = user
+                update_pubkey(st.session_state.token, st.session_state.pub_pem)
+                users = list_users()
+                mine = [u for u in users if u["username"] == user]
+                st.session_state.me_id = mine[0]["id"] if mine else None
+                print(f"ui: logged in me_id={st.session_state.me_id}")
+            except Exception as e:
+                st.error(str(e))
+    with c4:
+        if st.button("Registrar e Entrar"):
+            try:
+                st.session_state.token = register(user, pw, st.session_state.pub_pem)
+                st.session_state.me = user
+                users = list_users()
+                mine = [u for u in users if u["username"] == user]
+                st.session_state.me_id = mine[0]["id"] if mine else None
+                print(f"ui: registered me_id={st.session_state.me_id}")
+            except Exception as e:
+                st.error(str(e))
 
 if not st.session_state.token:
     st.stop()
 
-# --- seção 3: usuários e criação de conversa/grupo ---
-st.header("3) Criar conversa/grupo")
-users = list_users()
-st.caption("Selecione os membros (incluindo você). Dica: veja os IDs listados abaixo.")
-st.json(users)
-
-member_ids_input = st.text_input("IDs dos membros separados por vírgula (ex.: 1,2  para 1:1)")
+st.subheader("Pessoas e Conversas")
+u = list_users()
+ids = [str(x["id"])+" • "+x["username"] for x in u]
+st.caption("Selecione membros pelo ID")
+members = st.multiselect("Membros", ids)
 name = st.text_input("Nome do grupo (opcional)")
-
-if st.button("Criar conversa"):
-    try:
-        member_ids = [int(x.strip()) for x in member_ids_input.split(",") if x.strip()]
-        resp = create_conversation(st.session_state.token, member_ids, name or None)
-        st.session_state.current_conv = resp["conversation_id"]
-        st.success(f"Conversa criada: ID {st.session_state.current_conv} (key_version {resp['key_version']})")
-    except Exception as e:
-        st.error(f"Erro: {e}")
-
-# escolher conversa atual manualmente
-conv_id_manual = st.text_input("ID da conversa atual (se já souber)", value=str(st.session_state.current_conv or ""))
-if conv_id_manual:
-    try:
-        st.session_state.current_conv = int(conv_id_manual)
-    except:
-        pass
+c5, c6 = st.columns(2)
+with c5:
+    if st.button("Criar conversa"):
+        try:
+            mids = [int(x.split(" • ")[0]) for x in members]
+            if st.session_state.me_id and st.session_state.me_id not in mids:
+                mids.append(st.session_state.me_id)
+            r = create_conversation(st.session_state.token, mids, name or None)
+            st.session_state.current_conv = r["conversation_id"]
+            print(f"ui: conversation {st.session_state.current_conv}")
+        except Exception as e:
+            st.error(str(e))
+with c6:
+    conv_id_input = st.text_input("ID da conversa atual", value=str(st.session_state.current_conv or ""))
+    if st.button("Usar conversa"):
+        try:
+            st.session_state.current_conv = int(conv_id_input)
+            print(f"ui: set conversation {st.session_state.current_conv}")
+        except:
+            pass
 
 if not st.session_state.current_conv:
     st.stop()
 
-# --- seção 4: obter/armazenar chave de sessão (decifra com RSA privada) ---
-st.header("4) Chave de sessão (Blowfish) da conversa")
-if st.button("Obter/atualizar minha session key"):
-    try:
-        info = session_info(st.session_state.token, st.session_state.current_conv)
-        key_version = info["key_version"]
-        enc_b64 = info["session_key_encrypted_b64"]
-        key_bytes = rsa_decrypt(st.session_state.priv_pem, enc_b64)
-        st.session_state.conv_keys.setdefault(st.session_state.current_conv, {})[key_version] = key_bytes
-        st.success(f"Chave da conversa {st.session_state.current_conv} armazenada (versão {key_version}).")
-    except Exception as e:
-        st.error(f"Erro: {e}")
+st.subheader("Chave da Conversa")
+c7, c8 = st.columns(2)
+with c7:
+    if st.button("Obter/Atualizar minha chave"):
+        try:
+            info = session_info(st.session_state.token, st.session_state.current_conv)
+            kv = info["key_version"]
+            enc = info["session_key_encrypted_b64"]
+            try:
+                key_bytes = rsa_decrypt(st.session_state.priv_pem, enc)
+            except Exception as e:
+                print("ui: decrypt failed, syncing pubkey and rotating")
+                update_pubkey(st.session_state.token, st.session_state.pub_pem)
+                rotate_key(st.session_state.token, st.session_state.current_conv)
+                info = session_info(st.session_state.token, st.session_state.current_conv)
+                kv = info["key_version"]
+                enc = info["session_key_encrypted_b64"]
+                key_bytes = rsa_decrypt(st.session_state.priv_pem, enc)
+            st.session_state.conv_keys.setdefault(st.session_state.current_conv, {})[kv] = key_bytes
+            st.success(f"Versão {kv} armazenada")
+            print(f"ui: key stored v{kv}")
+        except Exception as e:
+            st.error(str(e))
+with c8:
+    st.toggle("Auto atualizar mensagens", value=st.session_state.auto_refresh, key="auto_refresh")
 
-st.write("Chaves que você já guardou (por conversa/versão):")
+st.caption("Chaves armazenadas")
 st.json({str(k): {str(v): f"{len(b)} bytes" for v,b in d.items()} for k,d in st.session_state.conv_keys.items()})
 
-# --- seção 5: enviar mensagem (cifra com Blowfish) ---
-st.header("5) Enviar mensagem")
+st.subheader("Chat")
 msg = st.text_input("Mensagem")
-vers = st.number_input("key_version para cifrar", min_value=1, value=max(st.session_state.conv_keys.get(st.session_state.current_conv, {1:b''}).keys(), default=1))
-if st.button("Enviar"):
-    try:
-        key_map = st.session_state.conv_keys.get(st.session_state.current_conv, {})
-        if vers not in key_map:
-            st.warning("Você ainda não guardou a chave dessa versão. Clique em 'Obter/atualizar minha session key'.")
-        else:
-            payload = blowfish_encrypt(key_map[vers], msg, st.session_state.current_conv)
-            send_message(st.session_state.token, st.session_state.current_conv, payload["iv"], payload["ciphertext"], payload["hmac"], vers)
-            st.success("Enviado!")
-    except Exception as e:
-        st.error(f"Erro: {e}")
+kv_default = max(st.session_state.conv_keys.get(st.session_state.current_conv, {1:b''}).keys(), default=1)
+kv = st.number_input("Versão da chave", min_value=1, value=kv_default)
+c9, c10 = st.columns(2)
+with c9:
+    if st.button("Enviar"):
+        try:
+            kmap = st.session_state.conv_keys.get(st.session_state.current_conv, {})
+            if kv not in kmap:
+                st.warning("Obtenha a chave")
+            else:
+                payload = blowfish_encrypt(kmap[kv], msg, st.session_state.current_conv)
+                send_message(st.session_state.token, st.session_state.current_conv, payload["iv"], payload["ciphertext"], payload["hmac"], kv)
+                st.session_state.last_pull = 0
+        except Exception as e:
+            st.error(str(e))
+with c10:
+    rid = st.text_input("Remover usuário (ID)")
+    if st.button("Rekey"):
+        try:
+            r = rekey_remove(st.session_state.token, st.session_state.current_conv, int(rid))
+            st.success(f"Nova versão {r['key_version']}")
+            print(f"ui: rekey to {r['key_version']}")
+        except Exception as e:
+            st.error(str(e))
 
-# --- seção 6: ler mensagens (decifra localmente) ---
-st.header("6) Mensagens")
-if st.button("Atualizar mensagens"):
+def pull_messages():
     try:
         msgs = list_messages(st.session_state.token, st.session_state.current_conv, limit=100)
         out = []
         for m in msgs:
-            key_map = st.session_state.conv_keys.get(st.session_state.current_conv, {})
-            text = "(sem chave para esta versão)"
-            if m["key_version"] in key_map:
+            text = "(sem chave)"
+            km = st.session_state.conv_keys.get(st.session_state.current_conv, {})
+            if m["key_version"] in km:
                 try:
-                    text = blowfish_decrypt(key_map[m["key_version"]], m["iv"], m["ciphertext"], m["hmac"], st.session_state.current_conv)
+                    text = blowfish_decrypt(km[m["key_version"]], m["iv"], m["ciphertext"], m["hmac"], st.session_state.current_conv)
                 except Exception as de:
-                    text = f"[HMAC falhou / chave errada] {de}"
-            out.append(f"#{m['id']}  v{m['key_version']}  from {m['sender_id']}: {text}")
-        st.text("\n".join(out) if out else "(sem mensagens)")
+                    text = f"[falha HMAC] {de}"
+            out.append((m["id"], m["key_version"], m["sender_id"], text))
+        return out
     except Exception as e:
-        st.error(f"Erro: {e}")
+        st.error(str(e))
+        return []
 
-# --- seção 7: rekey (remover alguém do grupo) ---
-st.header("7) Remover membro (REKEY)")
-rem_id = st.text_input("ID do usuário a remover do grupo (rekey)")
-if st.button("Remover e gerar nova chave"):
-    try:
-        resp = rekey_remove(st.session_state.token, st.session_state.current_conv, int(rem_id))
-        st.success(f"Rekey feito. Nova versão: {resp['key_version']}. Clique em 'Obter/atualizar minha session key'.")
-    except Exception as e:
-        st.error(f"Erro: {e}")
+if st.session_state.auto_refresh or st.button("Atualizar"):
+    now = time.time()
+    if now - st.session_state.last_pull > 1.5:
+        st.session_state.last_pull = now
+        print("ui: pulling messages")
+
+msgs = pull_messages()
+for m in msgs:
+    st.write(f"#{m[0]} v{m[1]} de {m[2]}: {m[3]}")
