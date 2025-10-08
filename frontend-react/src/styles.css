@@ -157,19 +157,6 @@ body{
   width:100%;
 }
 .ghost:hover{background:rgba(255,255,255,.06)}
-.form-card{
-  margin-top:8px;
-  display:flex;
-  flex-direction:column;
-  gap:8px;
-  padding:12px;
-  border-radius:10px;
-  background:rgba(255,255,255,.02);
-  border:1px solid var(--glass);
-  box-shadow: 0 8px 20px rgba(0,0,0,.25);
-  max-height:40vh;
-  overflow:auto;
-}
 .member-input-row{
   display:flex;
   gap:8px;
@@ -195,7 +182,14 @@ body{
   transition:transform .12s;
 }
 .add-btn:active{transform:scale(.96)}
-.chips{display:flex;flex-wrap:wrap;gap:8px}
+.chips{
+  display:flex;
+  flex-wrap:wrap;
+  gap:8px;
+  max-height: 120px;
+  overflow-y: auto;
+  padding: 4px;
+}
 .chip{
   display:flex;
   align-items:center;
@@ -399,6 +393,32 @@ body{
 .suggestion:hover{background:rgba(255,255,255,.02)}
 .chip:hover{transform:translateY(-3px)}
 .primary:active{transform:scale(.99)}
+
+/* === BLOCO MOVIDO E AJUSTADO PARA GARANTIR PRIORIDADE === */
+.form-card{
+  width: 100%; /* Força a caixa a ocupar 100% da largura do pai (a barra lateral) */
+  max-width: 100%;
+  margin-top:8px;
+  display:flex;
+  flex-direction:column;
+  gap:10px;
+  padding:16px;
+  border-radius:10px;
+  background:rgba(255,255,255,.02);
+  border:1px solid var(--glass);
+  box-shadow: 0 8px 20px rgba(0,0,0,.25);
+}
+.form-card > input {
+  width:100%;
+  padding:10px;
+  border-radius:8px;
+  border:1px solid var(--glass);
+  background:rgba(255,255,255,.03);
+  color:var(--text);
+  outline:none;
+}
+
+
 @keyframes pop{from{transform:scale(.98);opacity:.85}to{transform:scale(1);opacity:1}}
 @keyframes shake{0%{transform:translateX(0)}25%{transform:translateX(-3px)}50%{transform:translateX(3px)}75%{transform:translateX(-2px)}100%{transform:translateX(0)}}
 .thread::-webkit-scrollbar{width:10px}

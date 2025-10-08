@@ -37,12 +37,13 @@ def ensure_keys_after_first_login(username: str):
     if pub and priv:
         conn.close()
         return
-    debug(f"Gerando novo par de chaves RSA 2048-bit para o usuário '{username}'...")
+
+    print(f"\n[CRYPTO-DEBUG] Usuário '{username}' não possui chaves. Gerando novo par de chaves RSA 2048-bit...")
     priv_pem, pub_pem = rsa_generate_2048_pem_pair()
-    debug("Chave privada gerada.")
-    debug("Chave pública extraída.")
-    debug(f"Salvando chaves em formato PEM no banco de dados para '{username}'.")
+    print(f"[CRYPTO-DEBUG] Chave Privada para '{username}' (início): {priv_pem[:70].strip()}...")
+    print(f"[CRYPTO-DEBUG] Chave Pública para '{username}' (início): {pub_pem[:70].strip()}...")
+    
     cur.execute("UPDATE users SET public_key = ?, private_key = ? WHERE username = ?;", (pub_pem, priv_pem, username))
     conn.commit()
     conn.close()
-    debug("Geração de chaves concluída.")
+    print(f"[CRYPTO-DEBUG] Chaves de '{username}' salvas no banco de dados.\n")

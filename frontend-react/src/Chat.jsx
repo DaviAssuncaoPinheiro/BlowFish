@@ -11,6 +11,7 @@ import {
   groupRemoveMember,
   groupAddMember,
 } from "./api";
+
 export default function Chat({ me, token, onLogout }) {
   const [users, setUsers] = useState([]);
   const [groups, setGroups] = useState([]);
@@ -29,18 +30,26 @@ export default function Chat({ me, token, onLogout }) {
   const [notify, setNotify] = useState(null);
   const wsRef = useRef(null);
   const bottomRef = useRef(null);
+
   useEffect(() => {
     getUsers(token).then((u) => setUsers(u)).catch(() => setUsers([]));
     listGroups(token).then((g) => setGroups(g)).catch(() => setGroups([]));
   }, [token]);
+
   useEffect(() => {
     if (!me) return;
     wsRef.current = connectSocket(me, (data) => {
       if (data.type === "dm") {
+        if (data.from === me) {
+          return;
+        }
         if (peer && (data.from === peer || data.to === peer)) {
           setMessages((m) => [...m, { id: `${Date.now()}-${Math.random()}`, sender_username: data.from, plaintext: data.message, ts: Date.now() }]);
         }
       } else if (data.type === "group") {
+        if (data.from === me) {
+            return;
+        }
         if (activeGroup && data.conversation_id === activeGroup.id) {
           setMessages((m) => [...m, { id: `${Date.now()}-${Math.random()}`, sender_username: data.from, plaintext: data.message, ts: Date.now(), key_version: data.key_version }]);
         }
@@ -58,6 +67,7 @@ export default function Chat({ me, token, onLogout }) {
       try { wsRef.current && wsRef.current.close(); } catch {}
     };
   }, [peer, activeGroup, me, token]);
+
   useEffect(() => {
     if (peer) {
       setActiveGroup(null);
@@ -65,6 +75,7 @@ export default function Chat({ me, token, onLogout }) {
       getHistory(token, peer).then((hist) => setMessages(hist.map((h) => ({ id: `${h.id}`, sender_username: h.sender_username, plaintext: h.plaintext, ts: new Date(h.timestamp).getTime() })))).catch(() => setMessages([]));
     }
   }, [peer, token]);
+
   useEffect(() => {
     if (activeGroup) {
       setPeer(null);
@@ -72,15 +83,19 @@ export default function Chat({ me, token, onLogout }) {
       groupHistory(token, activeGroup.id).then((hist) => setMessages(hist.map((h) => ({ id: `${h.id}`, sender_username: h.sender_username, plaintext: h.plaintext, ts: new Date(h.timestamp).getTime(), key_version: h.key_version })))).catch(() => setMessages([]));
     }
   }, [activeGroup, token]);
+
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages]);
+
   useEffect(() => {
     if (!notify) return;
     const t = setTimeout(() => setNotify(null), 4000);
     return () => clearTimeout(t);
   }, [notify]);
+
   const peers = useMemo(() => users.map((u) => u.username).filter((u) => u !== me), [users, me]);
+
   useEffect(() => {
     if (!peerInput) {
       setPeerSuggestions([]);
@@ -89,9 +104,20 @@ export default function Chat({ me, token, onLogout }) {
     const q = peerInput.toLowerCase();
     setPeerSuggestions(peers.filter((p) => p.toLowerCase().includes(q)).slice(0, 8));
   }, [peerInput, peers]);
+
   async function handleSend() {
     const text = msg.trim();
     if (!text) return;
+
+    const optimisticMessage = {
+      id: `optimistic-${Date.now()}`,
+      sender_username: me,
+      plaintext: text,
+      ts: Date.now(),
+    };
+    setMessages((currentMessages) => [...currentMessages, optimisticMessage]);
+    setMsg("");
+
     try {
       if (peer) {
         await sendMessage(token, peer, text);
@@ -99,14 +125,20 @@ export default function Chat({ me, token, onLogout }) {
         await groupSend(token, activeGroup.id, text);
       } else {
         setNotify({ type: "error", text: "Selecione um destinatário ou grupo." });
+        setMessages((currentMessages) =>
+          currentMessages.filter((m) => m.id !== optimisticMessage.id)
+        );
         return;
       }
-      setMsg("");
     } catch (e) {
       const message = e?.response?.data?.detail || e?.message || "Erro ao enviar";
       setNotify({ type: "error", text: message });
+      setMessages((currentMessages) =>
+        currentMessages.filter((m) => m.id !== optimisticMessage.id)
+      );
     }
   }
+
   async function handleSelectSuggestion(name) {
     setPeer(name);
     setPeerInput(name);
@@ -119,6 +151,7 @@ export default function Chat({ me, token, onLogout }) {
       setMessages([]);
     }
   }
+
   function handlePeerKey(e) {
     if (e.key === "Enter" && peerInput.trim()) {
       const match = peers.find((p) => p.toLowerCase() === peerInput.trim().toLowerCase());
@@ -130,6 +163,7 @@ export default function Chat({ me, token, onLogout }) {
       }
     }
   }
+
   function addMemberFromInput() {
     const name = memberInput.trim();
     if (!name) return;
@@ -146,9 +180,11 @@ export default function Chat({ me, token, onLogout }) {
     }
     setMemberInput("");
   }
+
   function removeSelectedUser(name) {
     setSelectedUsers((s) => s.filter((x) => x !== name));
   }
+
   async function handleCreateGroup() {
     const members = Array.from(new Set([...selectedUsers, me]));
     if (members.length < 2) {
@@ -168,6 +204,7 @@ export default function Chat({ me, token, onLogout }) {
       setNotify({ type: "error", text: message });
     }
   }
+
   async function handleRemoveMember() {
     if (!activeGroup || !removeUser.trim()) {
       setNotify({ type: "error", text: "Digite o usuário a remover." });
@@ -186,6 +223,7 @@ export default function Chat({ me, token, onLogout }) {
       setNotify({ type: "error", text: message });
     }
   }
+
   async function handleAddMember() {
     const name = addUserInput.trim();
     if (!activeGroup) {
@@ -221,6 +259,7 @@ export default function Chat({ me, token, onLogout }) {
       setNotify({ type: "error", text: message });
     }
   }
+
   return (
     <div className="page">
       <aside className="panel left">
@@ -230,24 +269,9 @@ export default function Chat({ me, token, onLogout }) {
             <div className="muted">online</div>
           </div>
         </div>
-        <div className="section">Iniciar conversa privada</div>
-        <div className="peer-search">
-          <input
-            placeholder="Digite nome e pressione Enter"
-            value={peerInput}
-            onChange={(e) => setPeerInput(e.target.value)}
-            onKeyDown={handlePeerKey}
-          />
-          {peerSuggestions.length > 0 && (
-            <div className="suggestions">
-              {peerSuggestions.map((s) => (
-                <div key={s} onClick={() => handleSelectSuggestion(s)} className="suggestion">
-                  {s}
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
+        
+        {/* === SEÇÃO DE INICIAR CONVERSA REMOVIDA DAQUI === */}
+
         <div className="section">Pessoas</div>
         <div className="user-list">
           {peers.map((u) => (

@@ -7,6 +7,7 @@ from .messages import router as messages_router
 from .realtime import router as ws_router
 from .groups import router as groups_router
 
+
 app = FastAPI(title="Secure Chat Backend")
 
 app.add_middleware(
