@@ -1,14 +1,15 @@
-# backend/app/db.py
 import sqlite3
 import os
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DB_PATH = os.path.join(BASE_DIR, "chat_app.db")
 
+
 def get_conn():
     conn = sqlite3.connect(DB_PATH, check_same_thread=False)
     conn.row_factory = sqlite3.Row
     return conn
+
 
 def init_db():
     conn = get_conn()
@@ -58,8 +59,7 @@ def init_db():
       timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
     )
     """)
-    
-    # === TABELA ADICIONADA PARA MENSAGENS DE GRUPO ===
+
     cur.execute("""
     CREATE TABLE IF NOT EXISTS group_messages (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -71,12 +71,13 @@ def init_db():
       timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
     )
     """)
-    
+
     conn.commit()
     conn.close()
 
+
 try:
     init_db()
-    print("[DEBUG] Banco de dados 'chat_app.db' verificado/criado.")
+    print("Banco de dados 'chat_app.db' verificado/criado.")
 except Exception as e:
-    print(f"[DEBUG] Erro inicializando DB: {e}")
+    print(f"Erro inicializando DB: {e}")

@@ -5,6 +5,7 @@ from typing import Dict, Set, List, Optional
 
 router = APIRouter()
 
+
 class ConnectionManager:
     def __init__(self):
         self.connections: Dict[str, Set[WebSocket]] = {}
@@ -45,7 +46,9 @@ class ConnectionManager:
         for u in set(usernames):
             await self.send_to_user(u, payload)
 
+
 manager = ConnectionManager()
+
 
 @router.websocket("/ws/{username}")
 async def ws_user_endpoint_path(websocket: WebSocket, username: str):
@@ -58,15 +61,13 @@ async def ws_user_endpoint_path(websocket: WebSocket, username: str):
     except Exception:
         manager.disconnect(username, websocket)
 
+
 @router.websocket("/ws")
 async def ws_user_endpoint_query(websocket: WebSocket):
-    # suporta ?username=xxx para compatibilidade com clientes antigos
     params = websocket.query_params
     username = params.get("username")
     if not username:
-        # fecha com código 1008 (policy violation)
         await websocket.close(code=1008)
-        print("[DEBUG] WS rejected: missing username query param")
         return
     await manager.connect(username, websocket)
     try:
@@ -77,9 +78,10 @@ async def ws_user_endpoint_query(websocket: WebSocket):
     except Exception:
         manager.disconnect(username, websocket)
 
-# helpers compatíveis
+
 async def push_to_user(username: str, payload: dict):
     await manager.send_to_user(username, payload)
+
 
 async def push_to_many(usernames: List[str], payload: dict):
     await manager.broadcast(usernames, payload)

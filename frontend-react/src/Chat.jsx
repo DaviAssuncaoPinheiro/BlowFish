@@ -32,8 +32,12 @@ export default function Chat({ me, token, onLogout }) {
   const bottomRef = useRef(null);
 
   useEffect(() => {
-    getUsers(token).then((u) => setUsers(u)).catch(() => setUsers([]));
-    listGroups(token).then((g) => setGroups(g)).catch(() => setGroups([]));
+    getUsers(token)
+      .then((u) => setUsers(u))
+      .catch(() => setUsers([]));
+    listGroups(token)
+      .then((g) => setGroups(g))
+      .catch(() => setGroups([]));
   }, [token]);
 
   useEffect(() => {
@@ -44,27 +48,48 @@ export default function Chat({ me, token, onLogout }) {
           return;
         }
         if (peer && (data.from === peer || data.to === peer)) {
-          setMessages((m) => [...m, { id: `${Date.now()}-${Math.random()}`, sender_username: data.from, plaintext: data.message, ts: Date.now() }]);
+          setMessages((m) => [
+            ...m,
+            {
+              id: `${Date.now()}-${Math.random()}`,
+              sender_username: data.from,
+              plaintext: data.message,
+              ts: Date.now(),
+            },
+          ]);
         }
       } else if (data.type === "group") {
         if (data.from === me) {
-            return;
+          return;
         }
         if (activeGroup && data.conversation_id === activeGroup.id) {
-          setMessages((m) => [...m, { id: `${Date.now()}-${Math.random()}`, sender_username: data.from, plaintext: data.message, ts: Date.now(), key_version: data.key_version }]);
+          setMessages((m) => [
+            ...m,
+            {
+              id: `${Date.now()}-${Math.random()}`,
+              sender_username: data.from,
+              plaintext: data.message,
+              ts: Date.now(),
+              key_version: data.key_version,
+            },
+          ]);
         }
         if (data.system_note) {
           setNotify({ type: "success", text: data.system_note });
-          listGroups(token).then((gl) => {
-            setGroups(gl);
-            const updated = gl.find((g) => g.id === activeGroup?.id);
-            if (updated) setActiveGroup(updated);
-          }).catch(()=>{});
+          listGroups(token)
+            .then((gl) => {
+              setGroups(gl);
+              const updated = gl.find((g) => g.id === activeGroup?.id);
+              if (updated) setActiveGroup(updated);
+            })
+            .catch(() => {});
         }
       }
     });
     return () => {
-      try { wsRef.current && wsRef.current.close(); } catch {}
+      try {
+        wsRef.current && wsRef.current.close();
+      } catch {}
     };
   }, [peer, activeGroup, me, token]);
 
@@ -72,7 +97,18 @@ export default function Chat({ me, token, onLogout }) {
     if (peer) {
       setActiveGroup(null);
       setPeerInput(peer);
-      getHistory(token, peer).then((hist) => setMessages(hist.map((h) => ({ id: `${h.id}`, sender_username: h.sender_username, plaintext: h.plaintext, ts: new Date(h.timestamp).getTime() })))).catch(() => setMessages([]));
+      getHistory(token, peer)
+        .then((hist) =>
+          setMessages(
+            hist.map((h) => ({
+              id: `${h.id}`,
+              sender_username: h.sender_username,
+              plaintext: h.plaintext,
+              ts: new Date(h.timestamp).getTime(),
+            }))
+          )
+        )
+        .catch(() => setMessages([]));
     }
   }, [peer, token]);
 
@@ -80,7 +116,19 @@ export default function Chat({ me, token, onLogout }) {
     if (activeGroup) {
       setPeer(null);
       setPeerInput("");
-      groupHistory(token, activeGroup.id).then((hist) => setMessages(hist.map((h) => ({ id: `${h.id}`, sender_username: h.sender_username, plaintext: h.plaintext, ts: new Date(h.timestamp).getTime(), key_version: h.key_version })))).catch(() => setMessages([]));
+      groupHistory(token, activeGroup.id)
+        .then((hist) =>
+          setMessages(
+            hist.map((h) => ({
+              id: `${h.id}`,
+              sender_username: h.sender_username,
+              plaintext: h.plaintext,
+              ts: new Date(h.timestamp).getTime(),
+              key_version: h.key_version,
+            }))
+          )
+        )
+        .catch(() => setMessages([]));
     }
   }, [activeGroup, token]);
 
@@ -94,7 +142,10 @@ export default function Chat({ me, token, onLogout }) {
     return () => clearTimeout(t);
   }, [notify]);
 
-  const peers = useMemo(() => users.map((u) => u.username).filter((u) => u !== me), [users, me]);
+  const peers = useMemo(
+    () => users.map((u) => u.username).filter((u) => u !== me),
+    [users, me]
+  );
 
   useEffect(() => {
     if (!peerInput) {
@@ -102,7 +153,9 @@ export default function Chat({ me, token, onLogout }) {
       return;
     }
     const q = peerInput.toLowerCase();
-    setPeerSuggestions(peers.filter((p) => p.toLowerCase().includes(q)).slice(0, 8));
+    setPeerSuggestions(
+      peers.filter((p) => p.toLowerCase().includes(q)).slice(0, 8)
+    );
   }, [peerInput, peers]);
 
   async function handleSend() {
@@ -124,14 +177,18 @@ export default function Chat({ me, token, onLogout }) {
       } else if (activeGroup) {
         await groupSend(token, activeGroup.id, text);
       } else {
-        setNotify({ type: "error", text: "Selecione um destinatário ou grupo." });
+        setNotify({
+          type: "error",
+          text: "Selecione um destinatário ou grupo.",
+        });
         setMessages((currentMessages) =>
           currentMessages.filter((m) => m.id !== optimisticMessage.id)
         );
         return;
       }
     } catch (e) {
-      const message = e?.response?.data?.detail || e?.message || "Erro ao enviar";
+      const message =
+        e?.response?.data?.detail || e?.message || "Erro ao enviar";
       setNotify({ type: "error", text: message });
       setMessages((currentMessages) =>
         currentMessages.filter((m) => m.id !== optimisticMessage.id)
@@ -146,7 +203,14 @@ export default function Chat({ me, token, onLogout }) {
     setMessages([]);
     try {
       const hist = await getHistory(token, name);
-      setMessages(hist.map((h) => ({ id: `${h.id}`, sender_username: h.sender_username, plaintext: h.plaintext, ts: new Date(h.timestamp).getTime() })));
+      setMessages(
+        hist.map((h) => ({
+          id: `${h.id}`,
+          sender_username: h.sender_username,
+          plaintext: h.plaintext,
+          ts: new Date(h.timestamp).getTime(),
+        }))
+      );
     } catch {
       setMessages([]);
     }
@@ -154,7 +218,9 @@ export default function Chat({ me, token, onLogout }) {
 
   function handlePeerKey(e) {
     if (e.key === "Enter" && peerInput.trim()) {
-      const match = peers.find((p) => p.toLowerCase() === peerInput.trim().toLowerCase());
+      const match = peers.find(
+        (p) => p.toLowerCase() === peerInput.trim().toLowerCase()
+      );
       if (match) {
         setPeer(match);
         setPeerSuggestions([]);
@@ -188,7 +254,10 @@ export default function Chat({ me, token, onLogout }) {
   async function handleCreateGroup() {
     const members = Array.from(new Set([...selectedUsers, me]));
     if (members.length < 2) {
-      setNotify({ type: "error", text: "Adicione pelo menos mais uma pessoa ao grupo." });
+      setNotify({
+        type: "error",
+        text: "Adicione pelo menos mais uma pessoa ao grupo.",
+      });
       return;
     }
     try {
@@ -200,7 +269,8 @@ export default function Chat({ me, token, onLogout }) {
       setSelectedUsers([]);
       setNotify({ type: "success", text: "Grupo criado." });
     } catch (e) {
-      const message = e?.response?.data?.detail || e?.message || "Erro ao criar grupo";
+      const message =
+        e?.response?.data?.detail || e?.message || "Erro ao criar grupo";
       setNotify({ type: "error", text: message });
     }
   }
@@ -217,9 +287,13 @@ export default function Chat({ me, token, onLogout }) {
       setRemoveUser("");
       const updated = gl.find((gg) => gg.id === activeGroup.id);
       if (updated) setActiveGroup(updated);
-      setNotify({ type: "success", text: "Membro removido e chaves atualizadas." });
+      setNotify({
+        type: "success",
+        text: "Membro removido e chaves atualizadas.",
+      });
     } catch (e) {
-      const message = e?.response?.data?.detail || e?.message || "Erro ao remover membro";
+      const message =
+        e?.response?.data?.detail || e?.message || "Erro ao remover membro";
       setNotify({ type: "error", text: message });
     }
   }
@@ -253,9 +327,13 @@ export default function Chat({ me, token, onLogout }) {
       const updated = gl.find((gg) => gg.id === activeGroup.id);
       if (updated) setActiveGroup(updated);
       setAddUserInput("");
-      setNotify({ type: "success", text: `${name} adicionado ao grupo. Chaves rotacionadas.` });
+      setNotify({
+        type: "success",
+        text: `${name} adicionado ao grupo. Chaves rotacionadas.`,
+      });
     } catch (e) {
-      const message = e?.response?.data?.detail || e?.message || "Erro ao adicionar membro";
+      const message =
+        e?.response?.data?.detail || e?.message || "Erro ao adicionar membro";
       setNotify({ type: "error", text: message });
     }
   }
@@ -269,8 +347,6 @@ export default function Chat({ me, token, onLogout }) {
             <div className="muted">online</div>
           </div>
         </div>
-        
-        {/* === SEÇÃO DE INICIAR CONVERSA REMOVIDA DAQUI === */}
 
         <div className="section">Pessoas</div>
         <div className="user-list">
@@ -293,7 +369,9 @@ export default function Chat({ me, token, onLogout }) {
           {groups.map((g) => (
             <button
               key={g.id}
-              className={`user-tile ${activeGroup?.id === g.id ? "active" : ""}`}
+              className={`user-tile ${
+                activeGroup?.id === g.id ? "active" : ""
+              }`}
               onClick={() => {
                 setActiveGroup(g);
                 setPeer(null);
@@ -310,7 +388,11 @@ export default function Chat({ me, token, onLogout }) {
         </button>
         {createOpen && (
           <div className="glass-card form-card">
-            <input placeholder="Nome do grupo (opcional)" value={groupName} onChange={(e) => setGroupName(e.target.value)} />
+            <input
+              placeholder="Nome do grupo (opcional)"
+              value={groupName}
+              onChange={(e) => setGroupName(e.target.value)}
+            />
             <div className="member-input-row">
               <input
                 placeholder="Adicionar membro (digite o nome)"
@@ -318,7 +400,9 @@ export default function Chat({ me, token, onLogout }) {
                 onChange={(e) => setMemberInput(e.target.value)}
                 onKeyDown={(e) => e.key === "Enter" && addMemberFromInput()}
               />
-              <button className="add-btn" onClick={addMemberFromInput}>+</button>
+              <button className="add-btn" onClick={addMemberFromInput}>
+                +
+              </button>
             </div>
             <div className="chips">
               {selectedUsers.map((u) => (
@@ -328,23 +412,33 @@ export default function Chat({ me, token, onLogout }) {
                 </div>
               ))}
             </div>
-            <button className="primary" onClick={handleCreateGroup}>Criar grupo</button>
+            <button className="primary" onClick={handleCreateGroup}>
+              Criar grupo
+            </button>
           </div>
         )}
-        <button className="ghost" onClick={onLogout}>Sair</button>
+        <button className="ghost" onClick={onLogout}>
+          Sair
+        </button>
       </aside>
       <main className="panel chat">
-        {(peer || activeGroup) ? (
+        {peer || activeGroup ? (
           <>
             <header className="chat-head glass">
               <div className="peer">
-                <div className="peer-name">{peer ? peer : activeGroup?.name || `Grupo ${activeGroup?.id}`}</div>
+                <div className="peer-name">
+                  {peer
+                    ? peer
+                    : activeGroup?.name || `Grupo ${activeGroup?.id}`}
+                </div>
                 {activeGroup && (
                   <div className="members-inline">
                     <div className="muted">Membros:</div>
                     <div className="members-list">
                       {activeGroup.members.map((m) => (
-                        <span key={m} className="member-chip">{m}</span>
+                        <span key={m} className="member-chip">
+                          {m}
+                        </span>
                       ))}
                     </div>
                   </div>
@@ -353,9 +447,17 @@ export default function Chat({ me, token, onLogout }) {
             </header>
             {activeGroup && (
               <div className="group-admin glass">
-                <input placeholder="Remover usuário (digite o nome)" value={removeUser} onChange={(e) => setRemoveUser(e.target.value)} />
+                <input
+                  placeholder="Remover usuário (digite o nome)"
+                  value={removeUser}
+                  onChange={(e) => setRemoveUser(e.target.value)}
+                />
                 <button onClick={handleRemoveMember}>Remover</button>
-                <input placeholder="Adicionar usuário (digite o nome)" value={addUserInput} onChange={(e) => setAddUserInput(e.target.value)} />
+                <input
+                  placeholder="Adicionar usuário (digite o nome)"
+                  value={addUserInput}
+                  onChange={(e) => setAddUserInput(e.target.value)}
+                />
                 <button onClick={handleAddMember}>Adicionar</button>
               </div>
             )}
@@ -364,7 +466,10 @@ export default function Chat({ me, token, onLogout }) {
                 {messages.map((m) => {
                   const mine = m.sender_username === me;
                   return (
-                    <div key={m.id} className={`msg ${mine ? "me" : "other"} pop-in`}>
+                    <div
+                      key={m.id}
+                      className={`msg ${mine ? "me" : "other"} pop-in`}
+                    >
                       <div className="bubble">
                         <div className="meta">{m.sender_username}</div>
                         <div className="text">{m.plaintext}</div>
@@ -376,7 +481,12 @@ export default function Chat({ me, token, onLogout }) {
               </div>
             </section>
             <footer className="composer glass">
-              <input placeholder="Mensagem" value={msg} onChange={(e) => setMsg(e.target.value)} onKeyDown={(e) => e.key === "Enter" && handleSend()} />
+              <input
+                placeholder="Mensagem"
+                value={msg}
+                onChange={(e) => setMsg(e.target.value)}
+                onKeyDown={(e) => e.key === "Enter" && handleSend()}
+              />
               <button onClick={handleSend}>Enviar</button>
             </footer>
           </>
@@ -390,7 +500,9 @@ export default function Chat({ me, token, onLogout }) {
         )}
       </main>
       {notify && (
-        <div className={`toast ${notify.type === "error" ? "error" : "success"}`}>
+        <div
+          className={`toast ${notify.type === "error" ? "error" : "success"}`}
+        >
           {notify.text}
         </div>
       )}
