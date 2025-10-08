@@ -1,176 +1,120 @@
 import time
 import streamlit as st
-from api_client import register, login, update_pubkey, list_users, create_conversation, session_info, rotate_key, send_message, list_messages, rekey_remove
-from crypto_client import ensure_rsa_keypair, rsa_decrypt, blowfish_encrypt, blowfish_decrypt
+from api_client import register, login, list_users, send_message, history
 
 st.set_page_config(page_title="Chat E2EE", layout="centered")
 
-if "priv_pem" not in st.session_state:
-    st.session_state.priv_pem = None
-if "pub_pem" not in st.session_state:
-    st.session_state.pub_pem = None
 if "token" not in st.session_state:
     st.session_state.token = ""
 if "me" not in st.session_state:
     st.session_state.me = None
-if "me_id" not in st.session_state:
-    st.session_state.me_id = None
-if "conv_keys" not in st.session_state:
-    st.session_state.conv_keys = {}
-if "current_conv" not in st.session_state:
-    st.session_state.current_conv = None
-if "auto_refresh" not in st.session_state:
-    st.session_state.auto_refresh = True
-if "last_pull" not in st.session_state:
-    st.session_state.last_pull = 0
+if "peer" not in st.session_state:
+    st.session_state.peer = None
 
-ensure_rsa_keypair(st.session_state)
+st.title("🔐 Chat Seguro (E2EE)")
 
-st.title("🔐 Chat Seguro")
-with st.container():
-    c1, c2 = st.columns(2)
-    with c1:
-        user = st.text_input("Usuário")
-    with c2:
-        pw = st.text_input("Senha", type="password")
-    c3, c4 = st.columns(2)
-    with c3:
+if not st.session_state.token:
+    login_tab, register_tab = st.tabs(["Login", "Registrar"])
+
+    with login_tab:
+        user = st.text_input("Usuário", key="login_user")
+        pw = st.text_input("Senha", type="password", key="login_pass")
         if st.button("Entrar"):
             try:
                 st.session_state.token = login(user, pw)
                 st.session_state.me = user
-                update_pubkey(st.session_state.token, st.session_state.pub_pem)
-                users = list_users()
-                mine = [u for u in users if u["username"] == user]
-                st.session_state.me_id = mine[0]["id"] if mine else None
-                print(f"ui: logged in me_id={st.session_state.me_id}")
+                st.success("Login realizado com sucesso!")
             except Exception as e:
                 st.error(str(e))
-    with c4:
+
+    with register_tab:
+        user = st.text_input("Novo usuário", key="reg_user")
+        pw = st.text_input("Nova senha", type="password", key="reg_pass")
         if st.button("Registrar e Entrar"):
             try:
-                st.session_state.token = register(user, pw, st.session_state.pub_pem)
+                st.session_state.token = register(user, pw)
                 st.session_state.me = user
-                users = list_users()
-                mine = [u for u in users if u["username"] == user]
-                st.session_state.me_id = mine[0]["id"] if mine else None
-                print(f"ui: registered me_id={st.session_state.me_id}")
+                st.success("Registro e login realizados com sucesso!")
             except Exception as e:
                 st.error(str(e))
 
-if not st.session_state.token:
     st.stop()
 
-st.subheader("Pessoas e Conversas")
-u = list_users()
-ids = [str(x["id"])+" • "+x["username"] for x in u]
-st.caption("Selecione membros pelo ID")
-members = st.multiselect("Membros", ids)
-name = st.text_input("Nome do grupo (opcional)")
-c5, c6 = st.columns(2)
-with c5:
-    if st.button("Criar conversa"):
-        try:
-            mids = [int(x.split(" • ")[0]) for x in members]
-            if st.session_state.me_id and st.session_state.me_id not in mids:
-                mids.append(st.session_state.me_id)
-            r = create_conversation(st.session_state.token, mids, name or None)
-            st.session_state.current_conv = r["conversation_id"]
-            print(f"ui: conversation {st.session_state.current_conv}")
-        except Exception as e:
-            st.error(str(e))
-with c6:
-    conv_id_input = st.text_input("ID da conversa atual", value=str(st.session_state.current_conv or ""))
-    if st.button("Usar conversa"):
-        try:
-            st.session_state.current_conv = int(conv_id_input)
-            print(f"ui: set conversation {st.session_state.current_conv}")
-        except:
-            pass
+st.sidebar.markdown(f"**Bem-vindo, {st.session_state.me}!**")
+try:
+    users = list_users(st.session_state.token)
+except Exception as e:
+    st.sidebar.error(str(e))
+    users = []
 
-if not st.session_state.current_conv:
+st.sidebar.subheader("Usuários")
+if not users:
+    st.sidebar.info("Nenhum outro usuário.")
+else:
+    for u in users:
+        uname = u["username"]
+        if st.sidebar.button(uname):
+            st.session_state.peer = uname
+
+if st.sidebar.button("Sair"):
+    st.session_state.clear()
+    st.rerun()
+
+if not st.session_state.peer:
+    st.info("Selecione um usuário na barra lateral para iniciar uma conversa.")
     st.stop()
 
-st.subheader("Chave da Conversa")
-c7, c8 = st.columns(2)
-with c7:
-    if st.button("Obter/Atualizar minha chave"):
-        try:
-            info = session_info(st.session_state.token, st.session_state.current_conv)
-            kv = info["key_version"]
-            enc = info["session_key_encrypted_b64"]
-            try:
-                key_bytes = rsa_decrypt(st.session_state.priv_pem, enc)
-            except Exception as e:
-                print("ui: decrypt failed, syncing pubkey and rotating")
-                update_pubkey(st.session_state.token, st.session_state.pub_pem)
-                rotate_key(st.session_state.token, st.session_state.current_conv)
-                info = session_info(st.session_state.token, st.session_state.current_conv)
-                kv = info["key_version"]
-                enc = info["session_key_encrypted_b64"]
-                key_bytes = rsa_decrypt(st.session_state.priv_pem, enc)
-            st.session_state.conv_keys.setdefault(st.session_state.current_conv, {})[kv] = key_bytes
-            st.success(f"Versão {kv} armazenada")
-            print(f"ui: key stored v{kv}")
-        except Exception as e:
-            st.error(str(e))
-with c8:
-    st.toggle("Auto atualizar mensagens", value=st.session_state.auto_refresh, key="auto_refresh")
+peer = st.session_state.peer
+st.subheader(f"Chat com {peer}")
 
-st.caption("Chaves armazenadas")
-st.json({str(k): {str(v): f"{len(b)} bytes" for v,b in d.items()} for k,d in st.session_state.conv_keys.items()})
+# Atualização automática universal (sem autorefresh)
+placeholder = st.empty()
+time.sleep(2)
+st.experimental_set_query_params(_=int(time.time()))
+placeholder.empty()
 
-st.subheader("Chat")
-msg = st.text_input("Mensagem")
-kv_default = max(st.session_state.conv_keys.get(st.session_state.current_conv, {1:b''}).keys(), default=1)
-kv = st.number_input("Versão da chave", min_value=1, value=kv_default)
-c9, c10 = st.columns(2)
-with c9:
-    if st.button("Enviar"):
-        try:
-            kmap = st.session_state.conv_keys.get(st.session_state.current_conv, {})
-            if kv not in kmap:
-                st.warning("Obtenha a chave")
-            else:
-                payload = blowfish_encrypt(kmap[kv], msg, st.session_state.current_conv)
-                send_message(st.session_state.token, st.session_state.current_conv, payload["iv"], payload["ciphertext"], payload["hmac"], kv)
-                st.session_state.last_pull = 0
-        except Exception as e:
-            st.error(str(e))
-with c10:
-    rid = st.text_input("Remover usuário (ID)")
-    if st.button("Rekey"):
-        try:
-            r = rekey_remove(st.session_state.token, st.session_state.current_conv, int(rid))
-            st.success(f"Nova versão {r['key_version']}")
-            print(f"ui: rekey to {r['key_version']}")
-        except Exception as e:
-            st.error(str(e))
-
-def pull_messages():
+def pull():
     try:
-        msgs = list_messages(st.session_state.token, st.session_state.current_conv, limit=100)
-        out = []
-        for m in msgs:
-            text = "(sem chave)"
-            km = st.session_state.conv_keys.get(st.session_state.current_conv, {})
-            if m["key_version"] in km:
-                try:
-                    text = blowfish_decrypt(km[m["key_version"]], m["iv"], m["ciphertext"], m["hmac"], st.session_state.current_conv)
-                except Exception as de:
-                    text = f"[falha HMAC] {de}"
-            out.append((m["id"], m["key_version"], m["sender_id"], text))
-        return out
+        return history(st.session_state.token, peer)
     except Exception as e:
         st.error(str(e))
         return []
 
-if st.session_state.auto_refresh or st.button("Atualizar"):
-    now = time.time()
-    if now - st.session_state.last_pull > 1.5:
-        st.session_state.last_pull = now
-        print("ui: pulling messages")
-
-msgs = pull_messages()
+msgs = pull()
 for m in msgs:
-    st.write(f"#{m[0]} v{m[1]} de {m[2]}: {m[3]}")
+    is_me = (m["sender_username"] == st.session_state.me)
+    align = "flex-end" if is_me else "flex-start"
+    bg = "#4CAF50" if is_me else "#1E1E1E"
+    text_color = "#FFFFFF" if is_me else "#DDDDDD"
+    border = "1px solid #4CAF50" if is_me else "1px solid #333"
+    st.markdown(
+        f"""
+        <div style="display:flex; justify-content:{align}; margin:6px 0;">
+            <div style="max-width:70%; padding:10px 14px; background:{bg};
+                        border-radius:8px; border:{border}; color:{text_color};
+                        font-family:Segoe UI, sans-serif;">
+                <div style="font-size:12px; opacity:0.8;">
+                    {m['sender_username']} — <em>{m['timestamp']}</em>
+                </div>
+                <div style="margin-top:4px; white-space:pre-wrap;">
+                    {m['plaintext']}
+                </div>
+            </div>
+        </div>
+        """,
+        unsafe_allow_html=True
+    )
+
+st.divider()
+msg = st.text_area("Mensagem", height=100)
+if st.button("Enviar"):
+    if not msg.strip():
+        st.warning("Digite uma mensagem.")
+    else:
+        try:
+            send_message(st.session_state.token, peer, msg.strip())
+            st.success("Mensagem enviada!")
+            time.sleep(0.2)
+            st.rerun()
+        except Exception as e:
+            st.error(str(e))

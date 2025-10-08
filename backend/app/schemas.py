@@ -4,7 +4,6 @@ from typing import List, Optional
 class RegisterIn(BaseModel):
     username: str
     password: str
-    rsa_pubkey_pem: str
 
 class LoginIn(BaseModel):
     username: str
@@ -14,32 +13,40 @@ class TokenOut(BaseModel):
     token: str
 
 class UserOut(BaseModel):
-    id: int
     username: str
-    class Config:
-        orm_mode = True
 
-class ConversationCreateIn(BaseModel):
-    name: Optional[str] = None
-    member_ids: List[int]
-
-class MessageIn(BaseModel):
-    conversation_id: int
-    iv: str
-    ciphertext: str
-    hmac: str
-    key_version: int
+class SendMessageIn(BaseModel):
+    to_username: str
+    message: str
 
 class MessageOut(BaseModel):
     id: int
-    sender_id: int
-    iv: str
-    ciphertext: str
-    hmac: str
-    key_version: int
-    class Config:
-        orm_mode = True
+    sender_username: str
+    receiver_username: str
+    plaintext: str
+    timestamp: str
 
-class SessionInfoOut(BaseModel):
+class GroupCreateIn(BaseModel):
+    name: Optional[str] = None
+    members: List[str]
+
+class GroupOut(BaseModel):
+    id: int
+    name: str
+    members: List[str]
     key_version: int
-    session_key_encrypted_b64: str
+
+class GroupSendIn(BaseModel):
+    conversation_id: int
+    message: str
+
+class GroupRemoveIn(BaseModel):
+    conversation_id: int
+    remove_username: str
+
+class GroupMessageOut(BaseModel):
+    id: int
+    sender_username: str
+    plaintext: str
+    key_version: int
+    timestamp: str
