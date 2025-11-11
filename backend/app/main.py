@@ -4,11 +4,13 @@ from .db import init_db, get_conn
 from .schemas import RegisterIn, LoginIn, TokenOut, UserOut
 from .auth import make_hash, verify_hash, create_token, auth_required, ensure_keys_after_first_login
 from .messages import router as messages_router
-from .realtime import router as ws_router
+from .realtime import router as ws_router, manager
 from .groups import router as groups_router
 
 
 app = FastAPI(title="Secure Chat Backend")
+
+app.state.manager = manager
 
 app.add_middleware(
     CORSMiddleware,
