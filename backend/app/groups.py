@@ -372,9 +372,9 @@ async def get_group_history(group_id: int, me: str = Depends(auth_required)):
     )
     messages = []
     for msg in cur.fetchall():
-        plaintext = "<Erro na descriptografia>"
         key_version = msg["key_version"]
         if key_version in user_keys:
+            plaintext = "<Falha na descriptografia>"
             try:
                 session_key = user_keys[key_version]
                 iv = bytes.fromhex(msg["iv"])
@@ -382,18 +382,18 @@ async def get_group_history(group_id: int, me: str = Depends(auth_required)):
                 cipher = Blowfish.new(session_key, Blowfish.MODE_CBC, iv)
                 decrypted_padded = cipher.decrypt(encrypted_message)
                 plaintext = unpad(decrypted_padded, Blowfish.block_size).decode()
-            except Exception:
-                pass
 
-        messages.append(
-            {
-                "id": msg["id"],
-                "sender_username": msg["sender_username"],
-                "plaintext": plaintext,
-                "key_version": key_version,
-                "timestamp": msg["timestamp"],
-            }
-        )
+                messages.append(
+                    {
+                        "id": msg["id"],
+                        "sender_username": msg["sender_username"],
+                        "plaintext": plaintext,
+                        "key_version": key_version,
+                        "timestamp": msg["timestamp"],
+                    }
+                )
+            except Exception:
+                continue
 
     conn.close()
     return messages
