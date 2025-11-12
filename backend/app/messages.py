@@ -37,9 +37,14 @@ async def send_dm(data: DirectMessageIn, sender: str = Depends(auth_required)):
 
     payload = {
         "type": "dm",
-        "from": sender,
-        "to": data.to,
-        "msg_id": str(msg_id),
+        "_id": str(msg_id),
+        "sender_username": sender,
+        "receiver_username": data.to,
+        "encrypted_message": data.encrypted_message,
+        "encrypted_session_key": data.encrypted_session_key,
+        "sender_encrypted_session_key": data.sender_encrypted_session_key,
+        "iv": data.iv,
+        "timestamp": msg_doc['timestamp'].isoformat() + "Z",
     }
     if manager:
         await manager.send_to_user(data.to, payload)
