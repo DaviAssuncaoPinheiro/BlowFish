@@ -1,10 +1,21 @@
-import os, time, jwt, bcrypt
-from fastapi import HTTPException, Depends
+import os
+import time
+from datetime import datetime, timedelta
+import jwt
+import bcrypt
+from fastapi import HTTPException, Depends, WebSocket, Query, APIRouter
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
-from .db import get_conn
-from .crypto_utils import rsa_generate_2048_pem_pair, debug
+from .db import get_db
+from .crypto_utils import rsa_generate_2048_pem_pair, encrypt_with_password, decrypt_with_password, encrypt_with_vault_secret, decrypt_with_vault_secret
+from .vault import vault
+import os
 
-JWT_SECRET = os.getenv("JWT_SECRET", "dev-secret-change-me")
+router = APIRouter()
+
+JWT_SECRET = os.getenv("JWT_SECRET")
+if not JWT_SECRET:
+    print("!!!!!!!!!!!!!!!!! JWT_SECRET NOT DEFINED !!!!!!!!!!!!!!!!!")
+    JWT_SECRET = "dev-secret-change-me"
 JWT_ALG = "HS256"
 security = HTTPBearer()
 
@@ -14,8 +25,16 @@ def make_hash(pw: str) -> str:
 def verify_hash(pw: str, ph: str) -> bool:
     return bcrypt.checkpw(pw.encode(), ph.encode())
 
+from datetime import datetime, timedelta
+
+from datetime import datetime, timedelta
+
 def create_token(username: str) -> str:
-    payload = {"sub": username, "iat": int(time.time())}
+    payload = {
+        "sub": username,
+        "iat": datetime.utcnow(),
+        "exp": datetime.utcnow() + timedelta(hours=24),
+    }
     return jwt.encode(payload, JWT_SECRET, algorithm=JWT_ALG)
 
 def auth_required(creds: HTTPAuthorizationCredentials = Depends(security)) -> str:
@@ -25,25 +44,29 @@ def auth_required(creds: HTTPAuthorizationCredentials = Depends(security)) -> st
     except Exception:
         raise HTTPException(status_code=401, detail="invalid token")
 
-def ensure_keys_after_first_login(username: str):
-    conn = get_conn()
-    cur = conn.cursor()
-    cur.execute("SELECT public_key, private_key FROM users WHERE username = ?;", (username,))
-    row = cur.fetchone()
-    if not row:
-        conn.close()
-        raise HTTPException(404, "user not found")
-    pub, priv = row
-    if pub and priv:
-        conn.close()
-        return
+async def get_current_user_ws(token: str = Query(...)) -> str:
+    try:
+        data = jwt.decode(token, JWT_SECRET, algorithms=[JWT_ALG])
+        return data["sub"]
+    except Exception:
+        raise HTTPException(status_code=401, detail="invalid token")
 
-    print(f"\n[CRYPTO-DEBUG] Usuário '{username}' não possui chaves. Gerando novo par de chaves RSA 2048-bit...")
+@router.get("/users/{username}/public-key")
+def get_user_public_key(username: str):
+    db = get_db()
+    user = db.users.find_one({"username": username}, {"public_key": 1})
+    if not user or not user.get("public_key"):
+        raise HTTPException(404, "User or public key not found")
+    return {"public_key": user["public_key"]}
+
+def generate_and_store_user_keys(username: str, password: str) -> dict:
     priv_pem, pub_pem = rsa_generate_2048_pem_pair()
-    print(f"[CRYPTO-DEBUG] Chave Privada para '{username}' (início): {priv_pem[:70].strip()}...")
-    print(f"[CRYPTO-DEBUG] Chave Pública para '{username}' (início): {pub_pem[:70].strip()}...")
     
-    cur.execute("UPDATE users SET public_key = ?, private_key = ? WHERE username = ?;", (pub_pem, priv_pem, username))
-    conn.commit()
-    conn.close()
-    print(f"[CRYPTO-DEBUG] Chaves de '{username}' salvas no banco de dados.\n")
+    iv, encrypted_priv_pem_bytes = encrypt_with_vault_secret(priv_pem.encode())
+    
+    return {
+        "public_key": pub_pem, 
+        "encrypted_private_key_iv": iv.hex(),
+        "encrypted_private_key_ciphertext": encrypted_priv_pem_bytes.hex(),
+        "private_key_pem": priv_pem # Also return the decrypted private key for immediate use
+    }

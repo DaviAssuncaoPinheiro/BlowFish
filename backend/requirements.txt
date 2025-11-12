@@ -1,0 +1,9 @@
+fastapi
+uvicorn
+pymongo
+python-jose[pycryptodome]
+bcrypt
+pycryptodome
+cryptography
+python-multipart
+python-dotenv

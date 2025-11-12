@@ -1,83 +1,38 @@
-import sqlite3
 import os
+from pymongo import MongoClient
+from pymongo.database import Database
 
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-DB_PATH = os.path.join(BASE_DIR, "chat_app.db")
-
-
-def get_conn():
-    conn = sqlite3.connect(DB_PATH, check_same_thread=False)
-    conn.row_factory = sqlite3.Row
-    return conn
-
-
-def init_db():
-    conn = get_conn()
-    cur = conn.cursor()
-
-    cur.execute("""
-    CREATE TABLE IF NOT EXISTS users (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      username TEXT NOT NULL UNIQUE,
-      password_hash TEXT,
-      public_key TEXT,
-      private_key TEXT
-    )
-    """)
-    cur.execute("""
-    CREATE TABLE IF NOT EXISTS groups (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      name TEXT
-    )
-    """)
-    cur.execute("""
-    CREATE TABLE IF NOT EXISTS group_members (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      group_id INTEGER NOT NULL,
-      username TEXT NOT NULL
-    )
-    """)
-    cur.execute("""
-    CREATE TABLE IF NOT EXISTS group_keys (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      group_id INTEGER NOT NULL,
-      key_version INTEGER NOT NULL,
-      username TEXT NOT NULL,
-      encrypted_key TEXT NOT NULL,
-      created_at DATETIME DEFAULT CURRENT_TIMESTAMP
-    )
-    """)
-    cur.execute("""
-    CREATE TABLE IF NOT EXISTS messages (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      sender_username TEXT NOT NULL,
-      receiver_username TEXT NOT NULL,
-      encrypted_message TEXT NOT NULL,
-      encrypted_session_key TEXT NOT NULL,
-      sender_encrypted_session_key TEXT NOT NULL,
-      iv TEXT NOT NULL,
-      timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
-    )
-    """)
-
-    cur.execute("""
-    CREATE TABLE IF NOT EXISTS group_messages (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      group_id INTEGER NOT NULL,
-      sender_username TEXT NOT NULL,
-      encrypted_message TEXT NOT NULL,
-      iv TEXT NOT NULL,
-      key_version INTEGER NOT NULL,
-      timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
-    )
-    """)
-
-    conn.commit()
-    conn.close()
-
+# Conecte ao seu servidor MongoDB. Se estiver rodando localmente na porta padrão:
+MONGO_URI = os.getenv("MONGO_URI", "mongodb://secure_chat_user:supersecretpassword@localhost:27017/")
+DB_NAME = "secure_chat_app"
 
 try:
-    init_db()
-    print("Banco de dados 'chat_app.db' verificado/criado.")
+    client = MongoClient(MONGO_URI)
+    # A linha abaixo força a conexão e falhará imediatamente se houver um problema.
+    client.admin.command('ping')
+    print("✅ Conexão com o MongoDB estabelecida com sucesso.")
 except Exception as e:
-    print(f"Erro inicializando DB: {e}")
+    print(f"❌ Falha ao conectar com o MongoDB: {e}")
+    client = None # Garante que o app não continue com um cliente inválido
+
+def get_db() -> Database:
+    """
+    Retorna uma instância do banco de dados.
+    O Pymongo gerencia o pool de conexões, então podemos chamar isso
+    sempre que precisarmos de acesso ao banco.
+    """
+    if client is None:
+        raise Exception("O cliente MongoDB não está conectado. Verifique a inicialização do app.")
+    return client[DB_NAME]
+
+# Opcional: Criar índices para otimizar consultas.
+# Isso pode ser executado uma vez na inicialização do app.
+def create_indexes():
+    db = get_db()
+    db.users.create_index("username", unique=True)
+    db.direct_messages.create_index([("sender_username", 1), ("receiver_username", 1)])
+    db.direct_messages.create_index("timestamp")
+    db.groups.create_index("members")
+    db.group_messages.create_index("group_id")
+    db.group_messages.create_index("timestamp")
+    print("Índices do MongoDB verificados/criados.")
