@@ -39,11 +39,21 @@ def health():
 def register(data: RegisterIn):
     try:
         username = data.username.strip()
-        if not username or not data.password or len(data.password) < 8:
-            raise HTTPException(400, "invalid payload, password must be at least 8 characters")
+        password = data.password
+
+        if not username:
+            raise HTTPException(400, "O nome de usuário não pode estar em branco.")
+        
+        if len(password) < 8:
+            raise HTTPException(400, "A senha deve ter no mínimo 8 caracteres.")
+
+        special_characters = "!@#$%^&*()-+?_=,<>/"
+        if not any(c in special_characters for c in password):
+            raise HTTPException(400, "A senha deve conter pelo menos um caractere especial (ex: !@#$%).")
+
         db = get_db()
         if db.users.find_one({"username": username}):
-            raise HTTPException(400, "username exists")
+            raise HTTPException(400, "Este nome de usuário já está em uso.")
         pw_hash = make_hash(data.password)
         
         key_data = generate_and_store_user_keys(username, data.password)
