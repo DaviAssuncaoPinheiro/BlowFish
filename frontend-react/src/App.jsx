@@ -19,7 +19,13 @@ export default function App() {
   }
 
   return user ? (
-    <Chat me={user.username} token={user.token} onLogout={handleLogout} />
+    <Chat 
+      me={user.username} 
+      token={user.token} 
+      privateKey={user.privateKey}
+      publicKey={user.publicKey}
+      onLogout={handleLogout} 
+    />
   ) : (
     <Login onAuth={handleAuth} />
   );

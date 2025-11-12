@@ -2,30 +2,69 @@ import axios from "axios";
 const API_BASE = import.meta.env.VITE_API_BASE || "http://localhost:8000";
 const WS_BASE = import.meta.env.VITE_WS_BASE || "ws://localhost:8000";
 
+console.log("API_BASE resolved to:", API_BASE);
+
 export async function login(username, password) {
-  const res = await axios.post(`${API_BASE}/auth/login`, {
-    username,
-    password,
-  });
-  return res.data.token || res.data;
+  console.log("Attempting login for:", username);
+  try {
+    const res = await axios.post(`${API_BASE}/auth/login`, {
+      username,
+      password,
+    });
+    console.log("Login successful, response:", res.data);
+    return res.data;
+  } catch (error) {
+    console.error("Login failed:", error);
+    throw error;
+  }
 }
 export async function register(username, password) {
-  const res = await axios.post(`${API_BASE}/auth/register`, {
-    username,
-    password,
-  });
-  return res.data.token || res.data;
+  console.log("Attempting registration for:", username);
+  console.log("API_BASE for registration:", API_BASE);
+  try {
+    console.log("Before axios.post for registration.");
+    const res = await axios.post(`${API_BASE}/auth/register`, {
+      username,
+      password,
+    });
+    console.log("After axios.post for registration, response:", res.data);
+    return res.data;
+  } catch (error) {
+    console.error("Registration failed in api.js catch block (fetch):", error);
+    throw error;
+  }
 }
 export async function getUsers(token) {
   const res = await axios.get(`${API_BASE}/users`, {
     headers: { Authorization: `Bearer ${token}` },
   });
+  console.log("API getUsers response:", res.data); // Debug
   return res.data;
 }
-export async function sendMessage(token, to, message) {
+export async function getUserPublicKey(token, username) {
+  const res = await axios.get(`${API_BASE}/users/${username}/public_key`, {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  return res.data.public_key;
+}
+
+export async function sendMessage(
+  token,
+  to,
+  encrypted_message,
+  encrypted_session_key,
+  sender_encrypted_session_key,
+  iv
+) {
   const res = await axios.post(
     `${API_BASE}/messages/send`,
-    { to, message },
+    {
+      to,
+      encrypted_message,
+      encrypted_session_key,
+      sender_encrypted_session_key,
+      iv,
+    },
     { headers: { Authorization: `Bearer ${token}` } }
   );
   return res.data;
@@ -71,10 +110,10 @@ export async function groupHistory(token, groupId) {
   });
   return res.data;
 }
-export async function groupSend(token, groupId, message) {
+export async function groupSend(token, groupId, encryptedMessage, iv, keyVersion) {
   const res = await axios.post(
     `${API_BASE}/groups/${groupId}/send`,
-    { message },
+    { encrypted_message: encryptedMessage, iv: iv, key_version: keyVersion },
     { headers: { Authorization: `Bearer ${token}` } }
   );
   return res.data;

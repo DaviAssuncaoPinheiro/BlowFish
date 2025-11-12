@@ -10,9 +10,21 @@ import {
   groupSend,
   groupRemoveMember,
   groupAddMember,
+  getUserPublicKey,
 } from "./api";
-
-export default function Chat({ me, token, onLogout }) {
+import {
+  rsaEncrypt,
+  rsaDecrypt,
+  blowfishEncrypt,
+  blowfishDecrypt,
+  generateRandomBytes,
+  uint8ToBase64,
+  base64ToUint8,
+  importRsaPrivateKey,
+  importRsaPublicKey,
+} from "./crypto";
+export default function Chat({ me, token, onLogout, privateKey, publicKey }) {
+  console.log("Chat component props: me=", me, "token=", token);
   const [users, setUsers] = useState([]);
   const [groups, setGroups] = useState([]);
   const [peer, setPeer] = useState(null);
@@ -30,15 +42,33 @@ export default function Chat({ me, token, onLogout }) {
   const [notify, setNotify] = useState(null);
   const wsRef = useRef(null);
   const bottomRef = useRef(null);
+  const [myPrivateKey, setMyPrivateKey] = useState(null);
+  const [myPublicKey, setMyPublicKey] = useState(null);
 
   useEffect(() => {
+    setMyPrivateKey(privateKey);
+    setMyPublicKey(publicKey);
+  }, [privateKey, publicKey]);
+
+  useEffect(() => {
+    console.log("Calling getUsers with token:", token);
     getUsers(token)
-      .then((u) => setUsers(u))
-      .catch(() => setUsers([]));
+      .then((u) => {
+        console.log("getUsers returned:", u);
+        setUsers(u);
+      })
+      .catch((error) => {
+        console.error("Error fetching users:", error);
+        setUsers([]);
+      });
     listGroups(token)
       .then((g) => setGroups(g))
       .catch(() => setGroups([]));
-  }, [token]);
+  }, [token, me]);
+
+  useEffect(() => {
+    console.log("Users state updated:", users);
+  }, [users]);
 
   useEffect(() => {
     if (!me) return;
@@ -117,20 +147,50 @@ export default function Chat({ me, token, onLogout }) {
       setPeer(null);
       setPeerInput("");
       groupHistory(token, activeGroup.id)
-        .then((hist) =>
-          setMessages(
-            hist.map((h) => ({
-              id: `${h.id}`,
-              sender_username: h.sender_username,
-              plaintext: h.plaintext,
-              ts: new Date(h.timestamp).getTime(),
-              key_version: h.key_version,
-            }))
-          )
-        )
+        .then(async (hist) => {
+          if (!myPrivateKey) {
+            setNotify({
+              type: "error",
+              text: "Please upload your private key to decrypt group messages.",
+            });
+            return;
+          }
+          const messages = [];
+          for (const h of hist.messages) {
+            const keyVersion = hist.key_versions.find(
+              (kv) => kv.version === h.key_version
+            );
+            if (keyVersion) {
+              const userKey = keyVersion.keys.find((k) => k.username === me);
+              if (userKey) {
+                try {
+                  const sessionKey = await rsaDecrypt(
+                    myPrivateKey,
+                    base64ToUint8(userKey.encrypted_key)
+                  );
+                  const plaintext = await blowfishDecrypt(
+                    base64ToUint8(h.encrypted_message),
+                    sessionKey,
+                    base64ToUint8(h.iv)
+                  );
+                  messages.push({
+                    id: `${h._id}`,
+                    sender_username: h.sender_username,
+                    plaintext: plaintext,
+                    ts: new Date(h.timestamp).getTime(),
+                    key_version: h.key_version,
+                  });
+                } catch (e) {
+                  console.error("Failed to decrypt message", e);
+                }
+              }
+            }
+          }
+          setMessages(messages);
+        })
         .catch(() => setMessages([]));
     }
-  }, [activeGroup, token]);
+  }, [activeGroup, token, myPrivateKey, me]);
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -173,9 +233,75 @@ export default function Chat({ me, token, onLogout }) {
 
     try {
       if (peer) {
-        await sendMessage(token, peer, text);
+        if (!myPrivateKey) {
+          setNotify({
+            type: "error",
+            text: "Please upload your private key to send direct messages.",
+          });
+          setMessages((currentMessages) =>
+            currentMessages.filter((m) => m.id !== optimisticMessage.id)
+          );
+          return;
+        }
+        const recipientPublicKeyPem = await getUserPublicKey(token, peer);
+        const recipientPublicKey = await importRsaPublicKey(
+          recipientPublicKeyPem
+        );
+        const senderPublicKey = await importRsaPublicKey(myPublicKey);
+
+        const sessionKey = generateRandomBytes(16); // 128-bit key for Blowfish
+        const iv = generateRandomBytes(8); // 64-bit IV for Blowfish
+
+        const encryptedMessage = await blowfishEncrypt(text, sessionKey, iv);
+        const encryptedSessionKeyForRecipient = await rsaEncrypt(
+          recipientPublicKey,
+          sessionKey
+        );
+        const encryptedSessionKeyForSender = await rsaEncrypt(
+          senderPublicKey,
+          sessionKey
+        );
+
+        await sendMessage(
+          token,
+          peer,
+          uint8ToBase64(encryptedMessage),
+          uint8ToBase64(encryptedSessionKeyForRecipient),
+          uint8ToBase64(encryptedSessionKeyForSender),
+          uint8ToBase64(iv)
+        );
       } else if (activeGroup) {
-        await groupSend(token, activeGroup.id, text);
+        if (!myPrivateKey) {
+          setNotify({
+            type: "error",
+            text: "Please upload your private key to send group messages.",
+          });
+          setMessages((currentMessages) =>
+            currentMessages.filter((m) => m.id !== optimisticMessage.id)
+          );
+          return;
+        }
+        const keyVersion = activeGroup.key_versions.find(
+          (kv) => kv.version === activeGroup.key_version
+        );
+        if (keyVersion) {
+          const userKey = keyVersion.keys.find((k) => k.username === me);
+          if (userKey) {
+            const sessionKey = await rsaDecrypt(
+              myPrivateKey,
+              base64ToUint8(userKey.encrypted_key)
+            );
+            const iv = generateRandomBytes(8);
+            const encryptedMessage = await blowfishEncrypt(text, sessionKey, iv);
+            await groupSend(
+              token,
+              activeGroup.id,
+              uint8ToBase64(encryptedMessage),
+              uint8ToBase64(iv),
+              activeGroup.key_version
+            );
+          }
+        }
       } else {
         setNotify({
           type: "error",
@@ -338,6 +464,8 @@ export default function Chat({ me, token, onLogout }) {
     }
   }
 
+
+
   return (
     <div className="page">
       <aside className="panel left">
@@ -346,6 +474,7 @@ export default function Chat({ me, token, onLogout }) {
             <div className="me-name">{me}</div>
             <div className="muted">online</div>
           </div>
+
         </div>
 
         <div className="section">Pessoas</div>

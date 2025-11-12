@@ -1,7 +1,9 @@
 fastapi
-uvicorn[standard]
-cryptography
-pycryptodome
-pydantic
+uvicorn
+pymongo
+python-jose[pycryptodome]
 bcrypt
-PyJWT
+pycryptodome
+cryptography
+python-multipart
+python-dotenv
