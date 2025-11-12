@@ -140,7 +140,7 @@ export default function Chat({ me, token, onLogout, privateKey, publicKey }) {
       setPeerInput(peer);
       getHistory(token, peer)
         .then(async (hist) => {
-          if (!myPrivateKey) {
+          if (!decryptionKey) {
             setNotify({
               type: "error",
               text: "Please upload your private key to decrypt messages.",
@@ -156,7 +156,7 @@ export default function Chat({ me, token, onLogout, privateKey, publicKey }) {
                 : h.encrypted_session_key;
 
               const sessionKey = await rsaDecrypt(
-                myPrivateKey,
+                decryptionKey,
                 base64ToUint8(encryptedKey)
               );
               const plaintext = await blowfishDecrypt(
@@ -186,7 +186,7 @@ export default function Chat({ me, token, onLogout, privateKey, publicKey }) {
         })
         .catch(() => setMessages([]));
     }
-  }, [peer, token]);
+  }, [peer, token, decryptionKey]);
 
   useEffect(() => {
     if (activeGroup) {
@@ -213,11 +213,9 @@ export default function Chat({ me, token, onLogout, privateKey, publicKey }) {
                   console.log("Decrypting group message:", h);
                   console.log("Encrypted key for user:", userKey.encrypted_key);
                   const sessionKey = await rsaDecrypt(
-                    myPrivateKey,
+                    decryptionKey,
                     base64ToUint8(userKey.encrypted_key)
                   );
-                  console.log("Encrypted message:", h.encrypted_message);
-                  console.log("IV:", h.iv);
                   const plaintext = await blowfishDecrypt(
                     base64ToUint8(h.encrypted_message),
                     sessionKey,
@@ -231,7 +229,14 @@ export default function Chat({ me, token, onLogout, privateKey, publicKey }) {
                     key_version: h.key_version,
                   });
                 } catch (e) {
-                  console.error("Failed to decrypt message", e);
+                  console.error("Failed to decrypt group message:", e);
+                  messages.push({
+                    id: `${h._id}`,
+                    sender_username: h.sender_username,
+                    plaintext: `[Could not decrypt message: ${e.message}]`,
+                    ts: new Date(h.timestamp).getTime(),
+                    error: true,
+                  });
                 }
               }
             }
@@ -338,7 +343,7 @@ export default function Chat({ me, token, onLogout, privateKey, publicKey }) {
           const userKey = keyVersion.keys.find((k) => k.username === me);
           if (userKey) {
             const sessionKey = await rsaDecrypt(
-              myPrivateKey,
+              decryptionKey,
               base64ToUint8(userKey.encrypted_key)
             );
             const iv = generateRandomBytes(8);
