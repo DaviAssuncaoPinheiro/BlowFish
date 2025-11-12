@@ -85,7 +85,7 @@ export default function Chat({ me, token, onLogout, privateKey, publicKey }) {
   useEffect(() => {
     if (!me) return;
     wsRef.current = connectSocket(me, async (data) => {
-      if (data.type === "dm") {
+      /* if (data.type === "dm") {
         if (peer && (data.sender_username === peer || data.receiver_username === peer)) {
           try {
             if (!decryptionKey) {
@@ -121,51 +121,7 @@ export default function Chat({ me, token, onLogout, privateKey, publicKey }) {
             console.error("Failed to decrypt incoming DM:", e);
           }
         }
-      } else if (data.type === "group") {
-        if (data.from === me) {
-          return;
-        }
-        if (activeGroup && data.conversation_id === activeGroup.id) {
-          // A notificação de WS não contém a mensagem, apenas o sinal.
-          // Precisamos buscar a mensagem e descriptografá-la.
-          try {
-            const hist = await fetchGroupHistory(token, activeGroup.id);
-            const newMessage = hist.messages.find(msg => msg._id === data.msg_id);
-
-            if (newMessage) {
-              const keyVersion = hist.key_versions.find(
-                (kv) => kv.version === newMessage.key_version
-              );
-              if (keyVersion) {
-                const userKey = keyVersion.keys.find((k) => k.username === me);
-                if (userKey && decryptionKey) {
-                  const sessionKey = await rsaDecrypt(
-                    decryptionKey,
-                    base64ToUint8(userKey.encrypted_key)
-                  );
-                  const plaintext = await blowfishDecrypt(
-                    base64ToUint8(newMessage.encrypted_message),
-                    sessionKey,
-                    base64ToUint8(newMessage.iv)
-                  );
-
-                  setMessages((m) => [
-                    ...m,
-                    {
-                      id: `${newMessage._id}`,
-                      sender_username: newMessage.sender_username,
-                      plaintext: plaintext,
-                      ts: new Date(newMessage.timestamp).getTime(),
-                      key_version: newMessage.key_version,
-                    },
-                  ]);
-                }
-              }
-            }
-          } catch (e) {
-            console.error("Falha ao descriptografar mensagem de grupo em tempo real:", e);
-          }
-        }
+      } else */ if (data.type === "group") {
         if (data.system_note) {
           setNotify({ type: "success", text: data.system_note });
           listGroups(token)
@@ -239,20 +195,50 @@ export default function Chat({ me, token, onLogout, privateKey, publicKey }) {
     }
   }, [peer, token, decryptionKey]);
 
+  // Implementação de Polling sugerida
   useEffect(() => {
-    if (activeGroup) {
-      setPeer(null);
-      setPeerInput("");
-      groupHistory(token, activeGroup.id)
-        .then(async (hist) => {
-          if (!myPrivateKey) {
-            setNotify({
-              type: "error",
-              text: "Please upload your private key to decrypt group messages.",
-            });
-            return;
+    if (!peer && !activeGroup) {
+      return; // Não faz nada se nenhum chat estiver ativo
+    }
+
+    const fetchAndDecrypt = async () => {
+      if (!decryptionKey) {
+        // Não tenta buscar se a chave de descriptografia não estiver pronta
+        return;
+      }
+
+      try {
+        if (peer) {
+          const hist = await getHistory(token, peer);
+          const decryptedMessages = [];
+          for (const h of hist) {
+            try {
+              const isSender = h.sender_username === me;
+              const encryptedKey = isSender
+                ? h.sender_encrypted_session_key
+                : h.encrypted_session_key;
+              const sessionKey = await rsaDecrypt(decryptionKey, base64ToUint8(encryptedKey));
+              const plaintext = await blowfishDecrypt(base64ToUint8(h.encrypted_message), sessionKey, base64ToUint8(h.iv));
+              decryptedMessages.push({
+                id: `${h._id}`,
+                sender_username: h.sender_username,
+                plaintext: plaintext,
+                ts: new Date(h.timestamp).getTime(),
+              });
+            } catch (e) {
+              decryptedMessages.push({
+                id: `${h._id}`,
+                sender_username: h.sender_username,
+                plaintext: `[Could not decrypt message]`,
+                ts: new Date(h.timestamp).getTime(),
+                error: true,
+              });
+            }
           }
-          const messages = [];
+          setMessages(decryptedMessages);
+        } else if (activeGroup) {
+          const hist = await groupHistory(token, activeGroup.id);
+          const decryptedMessages = [];
           for (const h of hist.messages) {
             const keyVersion = hist.key_versions.find(
               (kv) => kv.version === h.key_version
@@ -261,18 +247,9 @@ export default function Chat({ me, token, onLogout, privateKey, publicKey }) {
               const userKey = keyVersion.keys.find((k) => k.username === me);
               if (userKey) {
                 try {
-                  console.log("Decrypting group message:", h);
-                  console.log("Encrypted key for user:", userKey.encrypted_key);
-                  const sessionKey = await rsaDecrypt(
-                    decryptionKey,
-                    base64ToUint8(userKey.encrypted_key)
-                  );
-                  const plaintext = await blowfishDecrypt(
-                    base64ToUint8(h.encrypted_message),
-                    sessionKey,
-                    base64ToUint8(h.iv)
-                  );
-                  messages.push({
+                  const sessionKey = await rsaDecrypt(decryptionKey, base64ToUint8(userKey.encrypted_key));
+                  const plaintext = await blowfishDecrypt(base64ToUint8(h.encrypted_message), sessionKey, base64ToUint8(h.iv));
+                  decryptedMessages.push({
                     id: `${h._id}`,
                     sender_username: h.sender_username,
                     plaintext: plaintext,
@@ -280,11 +257,10 @@ export default function Chat({ me, token, onLogout, privateKey, publicKey }) {
                     key_version: h.key_version,
                   });
                 } catch (e) {
-                  console.error("Failed to decrypt group message:", e);
-                  messages.push({
+                  decryptedMessages.push({
                     id: `${h._id}`,
                     sender_username: h.sender_username,
-                    plaintext: `[Could not decrypt message: ${e.message}]`,
+                    plaintext: `[Could not decrypt message]`,
                     ts: new Date(h.timestamp).getTime(),
                     error: true,
                   });
@@ -292,11 +268,27 @@ export default function Chat({ me, token, onLogout, privateKey, publicKey }) {
               }
             }
           }
-          setMessages(messages);
-        })
-        .catch(() => setMessages([]));
-    }
-  }, [activeGroup, token, myPrivateKey, me]);
+          setMessages(decryptedMessages);
+        }
+      } catch (error) {
+        console.error("Polling failed:", error);
+        // Opcional: notificar o usuário sobre a falha na atualização
+        // setNotify({ type: 'error', text: 'Falha ao sincronizar mensagens.' });
+      }
+    };
+
+    // Busca imediatamente ao abrir a conversa
+    fetchAndDecrypt();
+
+    // Configura o intervalo para buscar a cada 500ms
+    const intervalId = setInterval(fetchAndDecrypt, 500);
+
+    // Função de limpeza: para o intervalo quando o chat ativo muda ou o componente é desmontado
+    return () => {
+      clearInterval(intervalId);
+    };
+  }, [peer, activeGroup, token, decryptionKey, me]);
+
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -574,6 +566,65 @@ export default function Chat({ me, token, onLogout, privateKey, publicKey }) {
     }
   }
 
+  async function selectGroup(g) {
+    setActiveGroup(g);
+    setPeer(null);
+    setPeerInput("");
+    setMessages([]); // Limpa mensagens antigas
+
+    try {
+      const hist = await groupHistory(token, g.id);
+      if (!decryptionKey) {
+        setNotify({
+          type: "error",
+          text: "Chave privada não encontrada para descriptografar mensagens.",
+        });
+        return;
+      }
+      const decryptedMessages = [];
+      for (const h of hist.messages) {
+        const keyVersion = hist.key_versions.find(
+          (kv) => kv.version === h.key_version
+        );
+        if (keyVersion) {
+          const userKey = keyVersion.keys.find((k) => k.username === me);
+          if (userKey) {
+            try {
+              const sessionKey = await rsaDecrypt(
+                decryptionKey,
+                base64ToUint8(userKey.encrypted_key)
+              );
+              const plaintext = await blowfishDecrypt(
+                base64ToUint8(h.encrypted_message),
+                sessionKey,
+                base64ToUint8(h.iv)
+              );
+              decryptedMessages.push({
+                id: `${h._id}`,
+                sender_username: h.sender_username,
+                plaintext: plaintext,
+                ts: new Date(h.timestamp).getTime(),
+                key_version: h.key_version,
+              });
+            } catch (e) {
+              console.error("Failed to decrypt group message:", e);
+              decryptedMessages.push({
+                id: `${h._id}`,
+                sender_username: h.sender_username,
+                plaintext: `[Could not decrypt message: ${e.message}]`,
+                ts: new Date(h.timestamp).getTime(),
+                error: true,
+              });
+            }
+          }
+        }
+      }
+      setMessages(decryptedMessages);
+    } catch (e) {
+      setMessages([]);
+      setNotify({ type: "error", text: "Falha ao carregar histórico do grupo." });
+    }
+  }
 
 
   return (
@@ -611,11 +662,7 @@ export default function Chat({ me, token, onLogout, privateKey, publicKey }) {
               className={`user-tile ${
                 activeGroup?.id === g.id ? "active" : ""
               }`}
-              onClick={() => {
-                setActiveGroup(g);
-                setPeer(null);
-                setPeerInput("");
-              }}
+              onClick={() => selectGroup(g)}
             >
               <span>{g.name || `Grupo ${g.id}`}</span>
               <div className="group-members-count">{g.members.length}</div>
