@@ -171,6 +171,7 @@ async def list_user_groups(me: str = Depends(auth_required)):
                 "name": group["name"],
                 "members": group["members"],
                 "key_version": latest_version,
+                "key_versions": group["key_versions"],
             }
         )
     return groups_out

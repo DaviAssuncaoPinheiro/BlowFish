@@ -83,21 +83,42 @@ export default function Chat({ me, token, onLogout, privateKey, publicKey }) {
 
   useEffect(() => {
     if (!me) return;
-    wsRef.current = connectSocket(me, (data) => {
+    wsRef.current = connectSocket(me, async (data) => {
       if (data.type === "dm") {
-        if (data.from === me) {
-          return;
-        }
-        if (peer && (data.from === peer || data.to === peer)) {
-          setMessages((m) => [
-            ...m,
-            {
-              id: `${Date.now()}-${Math.random()}`,
-              sender_username: data.from,
-              plaintext: data.message,
-              ts: Date.now(),
-            },
-          ]);
+        if (peer && (data.sender_username === peer || data.receiver_username === peer)) {
+          try {
+            if (!decryptionKey) {
+              console.error("Decryption key not available for incoming message.");
+              return;
+            }
+            
+            const isSender = data.sender_username === me;
+            const encryptedKey = isSender
+              ? data.sender_encrypted_session_key
+              : data.encrypted_session_key;
+
+            const sessionKey = await rsaDecrypt(
+              decryptionKey,
+              base64ToUint8(encryptedKey)
+            );
+            const plaintext = await blowfishDecrypt(
+              base64ToUint8(data.encrypted_message),
+              sessionKey,
+              base64ToUint8(data.iv)
+            );
+
+            setMessages((m) => [
+              ...m,
+              {
+                id: `${data._id || Date.now()}`,
+                sender_username: data.sender_username,
+                plaintext: plaintext,
+                ts: new Date(data.timestamp).getTime(),
+              },
+            ]);
+          } catch (e) {
+            console.error("Failed to decrypt incoming DM:", e);
+          }
         }
       } else if (data.type === "group") {
         if (data.from === me) {
@@ -467,7 +488,9 @@ export default function Chat({ me, token, onLogout, privateKey, publicKey }) {
       setGroups(gl);
       setRemoveUser("");
       const updated = gl.find((gg) => gg.id === activeGroup.id);
-      if (updated) setActiveGroup(updated);
+      if (updated) {
+        setActiveGroup(updated);
+      }
       setNotify({
         type: "success",
         text: "Membro removido e chaves atualizadas.",
@@ -506,7 +529,9 @@ export default function Chat({ me, token, onLogout, privateKey, publicKey }) {
       const gl = await listGroups(token);
       setGroups(gl);
       const updated = gl.find((gg) => gg.id === activeGroup.id);
-      if (updated) setActiveGroup(updated);
+      if (updated) {
+        setActiveGroup(updated);
+      }
       setAddUserInput("");
       setNotify({
         type: "success",
