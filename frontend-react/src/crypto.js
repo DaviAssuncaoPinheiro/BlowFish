@@ -1,3 +1,4 @@
+import CryptoJS from 'crypto-js';
 import { blowfishEncrypt as bfEncrypt, blowfishDecrypt as bfDecrypt } from './blowfish.js';
 
 // --- Helper Functions ---
@@ -5,28 +6,37 @@ import { blowfishEncrypt as bfEncrypt, blowfishDecrypt as bfDecrypt } from './bl
 const textEncoder = new TextEncoder();
 const textDecoder = new TextDecoder();
 
+// Helper to convert Uint8Array to CryptoJS WordArray
+function uint8ToWordArray(uint8) {
+    const words = [];
+    let i = 0;
+    for (let j = 0; j < uint8.length; j++) {
+        words[i >>> 2] |= (uint8[j] & 0xFF) << (24 - (i % 4) * 8);
+        i++;
+    }
+    return CryptoJS.lib.WordArray.create(words, uint8.length);
+}
+
+// Helper to convert CryptoJS WordArray to Uint8Array
+function wordArrayToUint8(wordArray) {
+    const l = wordArray.sigBytes;
+    const words = wordArray.words;
+    const result = new Uint8Array(l);
+    let i = 0;
+    for (let j = 0; j < l; j++) {
+        result[i++] = (words[j >>> 2] >>> (24 - (j % 4) * 8)) & 0xff;
+    }
+    return result;
+}
+
 function base64ToUint8(b64) {
-    // Replace URL-safe characters and add padding if missing
-    b64 = b64.replace(/-/g, '+').replace(/_/g, '/');
-    while (b64.length % 4) {
-        b64 += '=';
-    }
-    const binStr = atob(b64);
-    const len = binStr.length;
-    const bytes = new Uint8Array(len);
-    for (let i = 0; i < len; i++) {
-        bytes[i] = binStr.charCodeAt(i);
-    }
-    return bytes;
+    const wordArray = CryptoJS.enc.Base64.parse(b64);
+    return wordArrayToUint8(wordArray);
 }
 
 function uint8ToBase64(bytes) {
-    let binStr = '';
-    const len = bytes.length;
-    for (let i = 0; i < len; i++) {
-        binStr += String.fromCharCode(bytes[i]);
-    }
-    return btoa(binStr);
+    const wordArray = uint8ToWordArray(bytes);
+    return CryptoJS.enc.Base64.stringify(wordArray);
 }
 
 // --- RSA Functions (Web Crypto API) ---

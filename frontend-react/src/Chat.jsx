@@ -44,10 +44,21 @@ export default function Chat({ me, token, onLogout, privateKey, publicKey }) {
   const bottomRef = useRef(null);
   const [myPrivateKey, setMyPrivateKey] = useState(null);
   const [myPublicKey, setMyPublicKey] = useState(null);
+  const [decryptionKey, setDecryptionKey] = useState(null);
 
   useEffect(() => {
     setMyPrivateKey(privateKey);
     setMyPublicKey(publicKey);
+    if (privateKey) {
+      importRsaPrivateKey(privateKey)
+        .then(setDecryptionKey)
+        .catch((err) => {
+          console.error("Failed to import private key:", err);
+          setNotify({ type: "error", text: "Chave privada inválida." });
+        });
+    } else {
+      setDecryptionKey(null);
+    }
   }, [privateKey, publicKey]);
 
   useEffect(() => {
@@ -128,16 +139,51 @@ export default function Chat({ me, token, onLogout, privateKey, publicKey }) {
       setActiveGroup(null);
       setPeerInput(peer);
       getHistory(token, peer)
-        .then((hist) =>
-          setMessages(
-            hist.map((h) => ({
-              id: `${h.id}`,
-              sender_username: h.sender_username,
-              plaintext: h.plaintext,
-              ts: new Date(h.timestamp).getTime(),
-            }))
-          )
-        )
+        .then(async (hist) => {
+          if (!myPrivateKey) {
+            setNotify({
+              type: "error",
+              text: "Please upload your private key to decrypt messages.",
+            });
+            return;
+          }
+          const decryptedMessages = [];
+          for (const h of hist) {
+            try {
+              const isSender = h.sender_username === me;
+              const encryptedKey = isSender
+                ? h.sender_encrypted_session_key
+                : h.encrypted_session_key;
+
+              const sessionKey = await rsaDecrypt(
+                myPrivateKey,
+                base64ToUint8(encryptedKey)
+              );
+              const plaintext = await blowfishDecrypt(
+                base64ToUint8(h.encrypted_message),
+                sessionKey,
+                base64ToUint8(h.iv)
+              );
+              decryptedMessages.push({
+                id: `${h._id}`,
+                sender_username: h.sender_username,
+                plaintext: plaintext,
+                ts: new Date(h.timestamp).getTime(),
+              });
+            } catch (e) {
+              console.error("Failed to decrypt DM:", e);
+              // Optionally, show a placeholder for undecryptable messages
+              decryptedMessages.push({
+                id: `${h._id}`,
+                sender_username: h.sender_username,
+                plaintext: `[Could not decrypt message: ${e.message}]`,
+                ts: new Date(h.timestamp).getTime(),
+                error: true,
+              });
+            }
+          }
+          setMessages(decryptedMessages);
+        })
         .catch(() => setMessages([]));
     }
   }, [peer, token]);
