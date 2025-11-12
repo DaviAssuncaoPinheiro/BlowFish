@@ -22,10 +22,9 @@ async def send_dm(data: DirectMessageIn, sender: str = Depends(auth_required)):
     if not recipient:
         raise HTTPException(status_code=404, detail="Destinatário não encontrado")
 
-    print(f"--- [MESSAGES] Recebida nova mensagem de '{sender}' para '{data.to}' ---")
-    print(f"--- [MESSAGES] Mensagem Criptografada: {data.encrypted_message[:80]}...")
-    print(f"--- [MESSAGES] Chave de Sessão Criptografada (para o destinatário): {data.encrypted_session_key[:80]}...")
-    print(f"--- [MESSAGES] IV: {data.iv}")
+    print("\n--- [MESSAGES] Nova mensagem direta recebida ---")
+    print(f"De: {sender} | Para: {data.to}")
+    print(f"Mensagem Criptografada (parcial): {data.encrypted_message[:80]}...")
 
     msg_doc = {
         "sender_username": sender,
@@ -53,6 +52,7 @@ async def send_dm(data: DirectMessageIn, sender: str = Depends(auth_required)):
     }
     if manager:
         await manager.send_to_user(data.to, payload)
+        print(f"--- [MESSAGES] Mensagem encaminhada para '{data.to}' via WebSocket.")
         await manager.send_to_user(sender, payload)
 
     return {"ok": True, "id": str(msg_id)}

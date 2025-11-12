@@ -88,6 +88,9 @@ def login(data: LoginIn):
         ciphertext = bytes.fromhex(user["encrypted_private_key_ciphertext"])
         
         try:
+            print(f"--- [MAIN] Tentando descriptografar a chave privada para o usuário '{username}'...")
+            print(f"--- [MAIN] IV (hex): {iv.hex()}")
+            print(f"--- [MAIN] Ciphertext (hex): {ciphertext.hex()[:80]}...")
             private_key_pem = decrypt_with_vault_secret(iv, ciphertext).decode()
         except Exception as e:
             raise HTTPException(500, f"Failed to decrypt private key: {e}")

@@ -135,12 +135,18 @@ def encrypt_with_vault_secret(data: bytes) -> Tuple[bytes, bytes]:
     return iv, ct
 
 def decrypt_with_vault_secret(iv: bytes, ciphertext: bytes) -> bytes:
+    print(f"--- [CRYPTO_UTILS] Descriptografando com a chave do vault...")
+    print(f"--- [CRYPTO_UTILS] IV para descriptografar: {iv.hex()}")
+    print(f"--- [CRYPTO_UTILS] Ciphertext para descriptografar: {ciphertext.hex()[:80]}...")
     key = _get_vault_key()
     cipher = Cipher(algorithms.AES(key), modes.CBC(iv), backend=default_backend())
     decryptor = cipher.decryptor()
     padded_pt = decryptor.update(ciphertext) + decryptor.finalize()
     # PKCS7 unpadding
     pad_len = padded_pt[-1]
+    print(f"--- [CRYPTO_UTILS] Padding detectado: {pad_len}")
     if pad_len < 1 or pad_len > 16: # AES block size is 16
         raise ValueError("Invalid padding length during decryption with vault secret.")
-    return padded_pt[:-pad_len]
+    unpadded_pt = padded_pt[:-pad_len]
+    print(f"--- [CRYPTO_UTILS] Dados descriptografados (PEM parcial): {unpadded_pt.decode()[:80]}...")
+    return unpadded_pt
