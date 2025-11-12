@@ -1,5 +1,7 @@
 from dotenv import load_dotenv
 load_dotenv()
+import os
+print(f"VAULT_SECRET from env: {os.getenv('VAULT_SECRET')}")
 
 
 
@@ -100,8 +102,8 @@ def login(data: LoginIn):
 @app.get("/users", response_model=list[UserOut])
 def list_users(me: str = Depends(auth_required)):
     db = get_db()
-    users = db.users.find({"username": {"$ne": me}}, {"username": 1}).sort("username", 1)
-    return [UserOut(username=u["username"]) for u in users]
+    users = db.users.find({"username": {"$ne": me}}, {"username": 1, "public_key": 1}).sort("username", 1)
+    return [UserOut(username=u["username"], public_key=u.get("public_key", "")) for u in users]
 
 @app.get("/users/{username}/public_key")
 def get_user_public_key(username: str, me: str = Depends(auth_required)):
