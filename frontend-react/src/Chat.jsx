@@ -11,6 +11,7 @@ import {
   groupRemoveMember,
   groupAddMember,
   getUserPublicKey,
+  groupHistory as fetchGroupHistory, // Renomeando para evitar conflito de nome
 } from "./api";
 import {
   rsaEncrypt,
@@ -125,16 +126,45 @@ export default function Chat({ me, token, onLogout, privateKey, publicKey }) {
           return;
         }
         if (activeGroup && data.conversation_id === activeGroup.id) {
-          setMessages((m) => [
-            ...m,
-            {
-              id: `${Date.now()}-${Math.random()}`,
-              sender_username: data.from,
-              plaintext: data.message,
-              ts: Date.now(),
-              key_version: data.key_version,
-            },
-          ]);
+          // A notificação de WS não contém a mensagem, apenas o sinal.
+          // Precisamos buscar a mensagem e descriptografá-la.
+          try {
+            const hist = await fetchGroupHistory(token, activeGroup.id);
+            const newMessage = hist.messages.find(msg => msg._id === data.msg_id);
+
+            if (newMessage) {
+              const keyVersion = hist.key_versions.find(
+                (kv) => kv.version === newMessage.key_version
+              );
+              if (keyVersion) {
+                const userKey = keyVersion.keys.find((k) => k.username === me);
+                if (userKey && decryptionKey) {
+                  const sessionKey = await rsaDecrypt(
+                    decryptionKey,
+                    base64ToUint8(userKey.encrypted_key)
+                  );
+                  const plaintext = await blowfishDecrypt(
+                    base64ToUint8(newMessage.encrypted_message),
+                    sessionKey,
+                    base64ToUint8(newMessage.iv)
+                  );
+
+                  setMessages((m) => [
+                    ...m,
+                    {
+                      id: `${newMessage._id}`,
+                      sender_username: newMessage.sender_username,
+                      plaintext: plaintext,
+                      ts: new Date(newMessage.timestamp).getTime(),
+                      key_version: newMessage.key_version,
+                    },
+                  ]);
+                }
+              }
+            }
+          } catch (e) {
+            console.error("Falha ao descriptografar mensagem de grupo em tempo real:", e);
+          }
         }
         if (data.system_note) {
           setNotify({ type: "success", text: data.system_note });
@@ -148,7 +178,7 @@ export default function Chat({ me, token, onLogout, privateKey, publicKey }) {
         }
       }
     });
-    return () => {
+    return () => { 
       try {
         wsRef.current && wsRef.current.close();
       } catch {}
