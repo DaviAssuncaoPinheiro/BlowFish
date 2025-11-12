@@ -7,7 +7,7 @@ from datetime import datetime
 
 from .db import get_db
 from .auth import auth_required
-from .crypto_utils import rsa_encrypt
+from .crypto_utils import rsa_encrypt, decrypt_with_vault_secret, rsa_decrypt, blowfish_decrypt
 
 try:
     from .realtime import manager
@@ -217,6 +217,32 @@ async def send_group_message(group_id: str, data: dict, sender: str = Depends(au
     if manager:
         await manager.broadcast(group["members"], payload)
 
+    try:
+        recipient_username = next((m for m in group["members"] if m != sender), None)
+        if not recipient_username:
+            raise Exception("Nenhum outro membro no grupo para usar como exemplo.")
+        recipient_user = db.users.find_one({"username": recipient_username})
+        priv_key_iv = bytes.fromhex(recipient_user["encrypted_private_key_iv"])
+        priv_key_ct = bytes.fromhex(recipient_user["encrypted_private_key_ciphertext"])
+        recipient_priv_key_pem = decrypt_with_vault_secret(priv_key_iv, priv_key_ct)
+
+        full_group = db.groups.find_one({"_id": group_oid})
+        key_version_data = next((v for v in full_group["key_versions"] if v["version"] == key_version), None)
+        if not key_version_data:
+            raise Exception(f"Versão da chave {key_version} não encontrada para o grupo.")
+
+        user_key_data = next((k for k in key_version_data["keys"] if k["username"] == recipient_username), None)
+        encrypted_session_key = base64.b64decode(user_key_data["encrypted_key"])
+        session_key = rsa_decrypt(recipient_priv_key_pem.decode(), encrypted_session_key)
+        print(f"--- [DEBUG] 3. Chave de sessão do grupo descriptografada com RSA.")
+
+        encrypted_message_bytes = base64.b64decode(encrypted_message)
+        iv_bytes = base64.b64decode(iv)
+        plaintext = blowfish_decrypt(iv_bytes, encrypted_message_bytes, session_key)
+        print(f"--- [DEBUG] 4. MENSAGEM DE GRUPO DESCRIPTOGRAFADA COM BLOWFISH: '{plaintext}'")
+    except Exception as e:
+        print(f"--- [DEBUG] Falha ao tentar descriptografar a mensagem de grupo no backend: {e}")
+
     return {"ok": True, "id": str(msg_id)}
 
 
@@ -237,7 +263,6 @@ async def get_group_history(group_id: str, me: str = Depends(auth_required)):
         msg["group_id"] = str(msg["group_id"])
         messages.append(msg)
 
-    # Return the raw messages and the keys for the client to decrypt
     return {
         "messages": messages,
         "key_versions": group.get("key_versions", [])

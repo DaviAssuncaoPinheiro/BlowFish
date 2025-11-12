@@ -1,5 +1,6 @@
 from dotenv import load_dotenv
 load_dotenv()
+import base64
 import os
 print(f"VAULT_SECRET from env: {os.getenv('VAULT_SECRET')}")
 
@@ -10,7 +11,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from .db import get_db, create_indexes
 from .schemas import RegisterIn, LoginIn, TokenOut, UserOut
 from .auth import make_hash, verify_hash, create_token, auth_required, generate_and_store_user_keys
-from .crypto_utils import decrypt_with_password, decrypt_with_vault_secret # Add this import
+from .crypto_utils import decrypt_with_password, decrypt_with_vault_secret
 from .messages import router as messages_router
 from .realtime import router as ws_router
 from .groups import router as groups_router
@@ -56,8 +57,8 @@ def register(data: RegisterIn):
         })
         
         print(f"--- [MAIN] Registro bem-sucedido para '{username}'. Enviando chaves para o cliente.")
-        print(f"--- [MAIN] Chave Pública (Registro):\n{key_data['public_key'][:80]}...")
-        print(f"--- [MAIN] Chave Privada (Registro):\n{key_data['private_key_pem'][:80]}...")
+        print(f"--- [MAIN] Chave Pública (Registro):\n{key_data['public_key']}")
+        print(f"--- [MAIN] Chave Privada (Registro):\n{key_data['private_key_pem']}")
         return {
             "token": create_token(username), 
             "private_key": key_data["private_key_pem"], 
@@ -89,15 +90,15 @@ def login(data: LoginIn):
         
         try:
             print(f"--- [MAIN] Tentando descriptografar a chave privada para o usuário '{username}'...")
-            print(f"--- [MAIN] IV (hex): {iv.hex()}")
-            print(f"--- [MAIN] Ciphertext (hex): {ciphertext.hex()[:80]}...")
+            print(f"--- [MAIN] IV (base64): {base64.b64encode(iv).decode()}")
+            print(f"--- [MAIN] Ciphertext (base64): {base64.b64encode(ciphertext).decode()}")
             private_key_pem = decrypt_with_vault_secret(iv, ciphertext).decode()
         except Exception as e:
             raise HTTPException(500, f"Failed to decrypt private key: {e}")
 
         print(f"--- [MAIN] Login bem-sucedido para '{username}'. Enviando chaves para o cliente.")
-        print(f"--- [MAIN] Chave Pública (Login):\n{user['public_key'][:80]}...")
-        print(f"--- [MAIN] Chave Privada Descriptografada (Login):\n{private_key_pem[:80]}...")
+        print(f"--- [MAIN] Chave Pública (Login):\n{user['public_key']}")
+        print(f"--- [MAIN] Chave Privada Descriptografada (Login):\n{private_key_pem}")
         return {
             "token": create_token(username), 
             "private_key": private_key_pem, 

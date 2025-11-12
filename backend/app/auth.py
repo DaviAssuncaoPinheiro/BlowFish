@@ -14,7 +14,6 @@ router = APIRouter()
 
 JWT_SECRET = os.getenv("JWT_SECRET")
 if not JWT_SECRET:
-    print("!!!!!!!!!!!!!!!!! JWT_SECRET NOT DEFINED !!!!!!!!!!!!!!!!!")
     JWT_SECRET = "dev-secret-change-me"
 JWT_ALG = "HS256"
 security = HTTPBearer()
@@ -68,5 +67,5 @@ def generate_and_store_user_keys(username: str, password: str) -> dict:
         "public_key": pub_pem, 
         "encrypted_private_key_iv": iv.hex(),
         "encrypted_private_key_ciphertext": encrypted_priv_pem_bytes.hex(),
-        "private_key_pem": priv_pem # Also return the decrypted private key for immediate use
+        "private_key_pem": priv_pem
     }
