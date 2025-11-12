@@ -10,7 +10,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from .db import get_db, create_indexes
 from .schemas import RegisterIn, LoginIn, TokenOut, UserOut
 from .auth import make_hash, verify_hash, create_token, auth_required, generate_and_store_user_keys
-from .crypto_utils import decrypt_with_password # Add this import
+from .crypto_utils import decrypt_with_password, decrypt_with_vault_secret # Add this import
 from .messages import router as messages_router
 from .realtime import router as ws_router
 from .groups import router as groups_router
