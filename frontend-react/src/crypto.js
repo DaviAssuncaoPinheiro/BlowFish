@@ -6,6 +6,11 @@ const textEncoder = new TextEncoder();
 const textDecoder = new TextDecoder();
 
 function base64ToUint8(b64) {
+    // Replace URL-safe characters and add padding if missing
+    b64 = b64.replace(/-/g, '+').replace(/_/g, '/');
+    while (b64.length % 4) {
+        b64 += '=';
+    }
     const binStr = atob(b64);
     const len = binStr.length;
     const bytes = new Uint8Array(len);
@@ -77,11 +82,11 @@ async function rsaEncrypt(publicKey, data) {
 // --- Blowfish Functions ---
 
 function blowfishEncrypt(plaintext, key, iv) {
-    return bfEncrypt(plaintext, key, iv);
+    return bfEncrypt(textEncoder.encode(plaintext), key, iv);
 }
 
 function blowfishDecrypt(ciphertext, key, iv) {
-    return bfDecrypt(ciphertext, key, iv);
+    return textDecoder.decode(bfDecrypt(ciphertext, key, iv));
 }
 
 // --- High-level API ---

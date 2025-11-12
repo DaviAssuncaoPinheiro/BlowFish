@@ -164,10 +164,14 @@ export default function Chat({ me, token, onLogout, privateKey, publicKey }) {
               const userKey = keyVersion.keys.find((k) => k.username === me);
               if (userKey) {
                 try {
+                  console.log("Decrypting group message:", h);
+                  console.log("Encrypted key for user:", userKey.encrypted_key);
                   const sessionKey = await rsaDecrypt(
                     myPrivateKey,
                     base64ToUint8(userKey.encrypted_key)
                   );
+                  console.log("Encrypted message:", h.encrypted_message);
+                  console.log("IV:", h.iv);
                   const plaintext = await blowfishDecrypt(
                     base64ToUint8(h.encrypted_message),
                     sessionKey,
