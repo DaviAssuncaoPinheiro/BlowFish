@@ -11,6 +11,7 @@ import os
 BLOCK_SIZE = Blowfish.block_size
 
 def rsa_generate_2048_pem_pair() -> Tuple[str, str]:
+    print("--- [CRYPTO_UTILS] Gerando novo par de chaves RSA 2048 ---")
     private_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
     priv_pem = private_key.private_bytes(
         encoding=serialization.Encoding.PEM,
@@ -22,21 +23,32 @@ def rsa_generate_2048_pem_pair() -> Tuple[str, str]:
         encoding=serialization.Encoding.PEM,
         format=serialization.PublicFormat.SubjectPublicKeyInfo
     ).decode()
+    print(f"--- [CRYPTO_UTILS] Chave Pública RSA Gerada:\n{pub_pem[:80]}...")
+    # Evite imprimir a chave privada inteira em logs de produção reais
+    print(f"--- [CRYPTO_UTILS] Chave Privada RSA Gerada:\n{priv_pem[:80]}...")
     return priv_pem, pub_pem
 
 def rsa_encrypt(pub_pem: str, data: bytes) -> bytes:
+    print(f"--- [CRYPTO_UTILS] Criptografando com chave pública RSA:\n{pub_pem[:80]}...")
+    print(f"--- [CRYPTO_UTILS] Dados para criptografar (RSA): {data}")
     public_key = serialization.load_pem_public_key(pub_pem.encode())
-    return public_key.encrypt(
+    encrypted_data = public_key.encrypt(
         data,
         asym_padding.OAEP(mgf=asym_padding.MGF1(algorithm=hashes.SHA256()), algorithm=hashes.SHA256(), label=None)
     )
+    print(f"--- [CRYPTO_UTILS] Dados criptografados (RSA): {encrypted_data.hex()[:80]}...")
+    return encrypted_data
 
 def rsa_decrypt(priv_pem: str, data: bytes) -> bytes:
+    print(f"--- [CRYPTO_UTILS] Descriptografando com chave privada RSA...")
+    print(f"--- [CRYPTO_UTILS] Dados para descriptografar (RSA): {data.hex()[:80]}...")
     private_key = serialization.load_pem_private_key(priv_pem.encode(), password=None)
-    return private_key.decrypt(
+    decrypted_data = private_key.decrypt(
         data,
         asym_padding.OAEP(mgf=asym_padding.MGF1(algorithm=hashes.SHA256()), algorithm=hashes.SHA256(), label=None)
     )
+    print(f"--- [CRYPTO_UTILS] Dados descriptografados (RSA): {decrypted_data}")
+    return decrypted_data
 
 def _pkcs7_pad(data: bytes, block_size: int = BLOCK_SIZE) -> bytes:
     pad_len = block_size - (len(data) % block_size)
@@ -49,15 +61,22 @@ def _pkcs7_unpad(data: bytes) -> bytes:
     return data[:-pad_len]
 
 def blowfish_encrypt(plaintext: str, key: bytes):
+    print(f"--- [CRYPTO_UTILS] Criptografando com Blowfish. Chave: {key.hex()}, Texto: '{plaintext[:50]}...'")
     iv = get_random_bytes(BLOCK_SIZE)
     cipher = Blowfish.new(key, Blowfish.MODE_CBC, iv)
     ct = cipher.encrypt(_pkcs7_pad(plaintext.encode(), BLOCK_SIZE))
+    print(f"--- [CRYPTO_UTILS] IV (Blowfish): {iv.hex()}")
+    print(f"--- [CRYPTO_UTILS] Texto Cifrado (Blowfish): {ct.hex()[:80]}...")
     return iv, ct
 
 def blowfish_decrypt(iv: bytes, ciphertext: bytes, key: bytes) -> str:
+    print(f"--- [CRYPTO_UTILS] Descriptografando com Blowfish. Chave: {key.hex()}, IV: {iv.hex()}")
+    print(f"--- [CRYPTO_UTILS] Texto Cifrado para descriptografar (Blowfish): {ciphertext.hex()[:80]}...")
     cipher = Blowfish.new(key, Blowfish.MODE_CBC, iv)
     pt = cipher.decrypt(ciphertext)
-    return _pkcs7_unpad(pt).decode()
+    unpadded_pt = _pkcs7_unpad(pt).decode()
+    print(f"--- [CRYPTO_UTILS] Texto Descriptografado (Blowfish): '{unpadded_pt[:50]}...'")
+    return unpadded_pt
 
 def derive_key(password: str, salt: bytes) -> bytes:
     kdf = PBKDF2HMAC(

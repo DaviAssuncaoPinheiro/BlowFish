@@ -55,6 +55,9 @@ def register(data: RegisterIn):
             "encrypted_private_key_ciphertext": key_data["encrypted_private_key_ciphertext"],
         })
         
+        print(f"--- [MAIN] Registro bem-sucedido para '{username}'. Enviando chaves para o cliente.")
+        print(f"--- [MAIN] Chave Pública (Registro):\n{key_data['public_key'][:80]}...")
+        print(f"--- [MAIN] Chave Privada (Registro):\n{key_data['private_key_pem'][:80]}...")
         return {
             "token": create_token(username), 
             "private_key": key_data["private_key_pem"], 
@@ -89,6 +92,9 @@ def login(data: LoginIn):
         except Exception as e:
             raise HTTPException(500, f"Failed to decrypt private key: {e}")
 
+        print(f"--- [MAIN] Login bem-sucedido para '{username}'. Enviando chaves para o cliente.")
+        print(f"--- [MAIN] Chave Pública (Login):\n{user['public_key'][:80]}...")
+        print(f"--- [MAIN] Chave Privada Descriptografada (Login):\n{private_key_pem[:80]}...")
         return {
             "token": create_token(username), 
             "private_key": private_key_pem, 

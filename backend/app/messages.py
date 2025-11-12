@@ -22,6 +22,11 @@ async def send_dm(data: DirectMessageIn, sender: str = Depends(auth_required)):
     if not recipient:
         raise HTTPException(status_code=404, detail="Destinatário não encontrado")
 
+    print(f"--- [MESSAGES] Recebida nova mensagem de '{sender}' para '{data.to}' ---")
+    print(f"--- [MESSAGES] Mensagem Criptografada: {data.encrypted_message[:80]}...")
+    print(f"--- [MESSAGES] Chave de Sessão Criptografada (para o destinatário): {data.encrypted_session_key[:80]}...")
+    print(f"--- [MESSAGES] IV: {data.iv}")
+
     msg_doc = {
         "sender_username": sender,
         "receiver_username": data.to,
