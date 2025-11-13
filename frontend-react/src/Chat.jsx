@@ -10,9 +10,22 @@ import {
   groupSend,
   groupRemoveMember,
   groupAddMember,
+  getUserPublicKey,
+  groupHistory as fetchGroupHistory, // Renomeando para evitar conflito de nome
 } from "./api";
-
-export default function Chat({ me, token, onLogout }) {
+import {
+  rsaEncrypt,
+  rsaDecrypt,
+  blowfishEncrypt,
+  blowfishDecrypt,
+  generateRandomBytes,
+  uint8ToBase64,
+  base64ToUint8,
+  importRsaPrivateKey,
+  importRsaPublicKey,
+} from "./crypto";
+export default function Chat({ me, token, onLogout, privateKey, publicKey }) {
+  console.log("Chat component props: me=", me, "token=", token);
   const [users, setUsers] = useState([]);
   const [groups, setGroups] = useState([]);
   const [peer, setPeer] = useState(null);
@@ -30,50 +43,85 @@ export default function Chat({ me, token, onLogout }) {
   const [notify, setNotify] = useState(null);
   const wsRef = useRef(null);
   const bottomRef = useRef(null);
+  const [myPrivateKey, setMyPrivateKey] = useState(null);
+  const [myPublicKey, setMyPublicKey] = useState(null);
+  const [decryptionKey, setDecryptionKey] = useState(null);
 
   useEffect(() => {
+    setMyPrivateKey(privateKey);
+    setMyPublicKey(publicKey);
+    if (privateKey) {
+      importRsaPrivateKey(privateKey)
+        .then(setDecryptionKey)
+        .catch((err) => {
+          console.error("Failed to import private key:", err);
+          setNotify({ type: "error", text: "Chave privada inválida." });
+        });
+    } else {
+      setDecryptionKey(null);
+    }
+  }, [privateKey, publicKey]);
+
+  useEffect(() => {
+    console.log("Calling getUsers with token:", token);
     getUsers(token)
-      .then((u) => setUsers(u))
-      .catch(() => setUsers([]));
+      .then((u) => {
+        console.log("getUsers returned:", u);
+        setUsers(u);
+      })
+      .catch((error) => {
+        console.error("Error fetching users:", error);
+        setUsers([]);
+      });
     listGroups(token)
       .then((g) => setGroups(g))
       .catch(() => setGroups([]));
-  }, [token]);
+  }, [token, me]);
+
+  useEffect(() => {
+    console.log("Users state updated:", users);
+  }, [users]);
 
   useEffect(() => {
     if (!me) return;
-    wsRef.current = connectSocket(me, (data) => {
-      if (data.type === "dm") {
-        if (data.from === me) {
-          return;
+    wsRef.current = connectSocket(me, async (data) => {
+      /* if (data.type === "dm") {
+        if (peer && (data.sender_username === peer || data.receiver_username === peer)) {
+          try {
+            if (!decryptionKey) {
+              console.error("Decryption key not available for incoming message.");
+              return;
+            }
+            
+            const isSender = data.sender_username === me;
+            const encryptedKey = isSender
+              ? data.sender_encrypted_session_key
+              : data.encrypted_session_key;
+
+            const sessionKey = await rsaDecrypt(
+              decryptionKey,
+              base64ToUint8(encryptedKey)
+            );
+            const plaintext = await blowfishDecrypt(
+              base64ToUint8(data.encrypted_message),
+              sessionKey,
+              base64ToUint8(data.iv)
+            );
+
+            setMessages((m) => [
+              ...m,
+              {
+                id: `${data._id || Date.now()}`,
+                sender_username: data.sender_username,
+                plaintext: plaintext,
+                ts: new Date(data.timestamp).getTime(),
+              },
+            ]);
+          } catch (e) {
+            console.error("Failed to decrypt incoming DM:", e);
+          }
         }
-        if (peer && (data.from === peer || data.to === peer)) {
-          setMessages((m) => [
-            ...m,
-            {
-              id: `${Date.now()}-${Math.random()}`,
-              sender_username: data.from,
-              plaintext: data.message,
-              ts: Date.now(),
-            },
-          ]);
-        }
-      } else if (data.type === "group") {
-        if (data.from === me) {
-          return;
-        }
-        if (activeGroup && data.conversation_id === activeGroup.id) {
-          setMessages((m) => [
-            ...m,
-            {
-              id: `${Date.now()}-${Math.random()}`,
-              sender_username: data.from,
-              plaintext: data.message,
-              ts: Date.now(),
-              key_version: data.key_version,
-            },
-          ]);
-        }
+      } else */ if (data.type === "group") {
         if (data.system_note) {
           setNotify({ type: "success", text: data.system_note });
           listGroups(token)
@@ -86,7 +134,7 @@ export default function Chat({ me, token, onLogout }) {
         }
       }
     });
-    return () => {
+    return () => { 
       try {
         wsRef.current && wsRef.current.close();
       } catch {}
@@ -98,39 +146,149 @@ export default function Chat({ me, token, onLogout }) {
       setActiveGroup(null);
       setPeerInput(peer);
       getHistory(token, peer)
-        .then((hist) =>
-          setMessages(
-            hist.map((h) => ({
-              id: `${h.id}`,
-              sender_username: h.sender_username,
-              plaintext: h.plaintext,
-              ts: new Date(h.timestamp).getTime(),
-            }))
-          )
-        )
-        .catch(() => setMessages([]));
-    }
-  }, [peer, token]);
+        .then(async (hist) => {
+          if (!decryptionKey) {
+            setNotify({
+              type: "error",
+              text: "Please upload your private key to decrypt messages.",
+            });
+            return;
+          }
+          const decryptedMessages = [];
+          for (const h of hist) {
+            try {
+              const isSender = h.sender_username === me;
+              const encryptedKey = isSender
+                ? h.sender_encrypted_session_key
+                : h.encrypted_session_key;
 
-  useEffect(() => {
-    if (activeGroup) {
-      setPeer(null);
-      setPeerInput("");
-      groupHistory(token, activeGroup.id)
-        .then((hist) =>
-          setMessages(
-            hist.map((h) => ({
-              id: `${h.id}`,
-              sender_username: h.sender_username,
-              plaintext: h.plaintext,
-              ts: new Date(h.timestamp).getTime(),
-              key_version: h.key_version,
-            }))
-          )
-        )
+              const sessionKey = await rsaDecrypt(
+                decryptionKey,
+                base64ToUint8(encryptedKey)
+              );
+              const plaintext = await blowfishDecrypt(
+                base64ToUint8(h.encrypted_message),
+                sessionKey,
+                base64ToUint8(h.iv)
+              );
+              decryptedMessages.push({
+                id: `${h._id}`,
+                sender_username: h.sender_username,
+                plaintext: plaintext,
+                ts: new Date(h.timestamp).getTime(),
+              });
+            } catch (e) {
+              console.error("Failed to decrypt DM:", e);
+              // Optionally, show a placeholder for undecryptable messages
+              decryptedMessages.push({
+                id: `${h._id}`,
+                sender_username: h.sender_username,
+                plaintext: `[Could not decrypt message: ${e.message}]`,
+                ts: new Date(h.timestamp).getTime(),
+                error: true,
+              });
+            }
+          }
+          setMessages(decryptedMessages);
+        })
         .catch(() => setMessages([]));
     }
-  }, [activeGroup, token]);
+  }, [peer, token, decryptionKey]);
+
+  // Implementação de Polling sugerida
+  useEffect(() => {
+    if (!peer && !activeGroup) {
+      return; // Não faz nada se nenhum chat estiver ativo
+    }
+
+    const fetchAndDecrypt = async () => {
+      if (!decryptionKey) {
+        // Não tenta buscar se a chave de descriptografia não estiver pronta
+        return;
+      }
+
+      try {
+        if (peer) {
+          const hist = await getHistory(token, peer);
+          const decryptedMessages = [];
+          for (const h of hist) {
+            try {
+              const isSender = h.sender_username === me;
+              const encryptedKey = isSender
+                ? h.sender_encrypted_session_key
+                : h.encrypted_session_key;
+              const sessionKey = await rsaDecrypt(decryptionKey, base64ToUint8(encryptedKey));
+              const plaintext = await blowfishDecrypt(base64ToUint8(h.encrypted_message), sessionKey, base64ToUint8(h.iv));
+              decryptedMessages.push({
+                id: `${h._id}`,
+                sender_username: h.sender_username,
+                plaintext: plaintext,
+                ts: new Date(h.timestamp).getTime(),
+              });
+            } catch (e) {
+              decryptedMessages.push({
+                id: `${h._id}`,
+                sender_username: h.sender_username,
+                plaintext: `[Could not decrypt message]`,
+                ts: new Date(h.timestamp).getTime(),
+                error: true,
+              });
+            }
+          }
+          setMessages(decryptedMessages);
+        } else if (activeGroup) {
+          const hist = await groupHistory(token, activeGroup.id);
+          const decryptedMessages = [];
+          for (const h of hist.messages) {
+            const keyVersion = hist.key_versions.find(
+              (kv) => kv.version === h.key_version
+            );
+            if (keyVersion) {
+              const userKey = keyVersion.keys.find((k) => k.username === me);
+              if (userKey) {
+                try {
+                  const sessionKey = await rsaDecrypt(decryptionKey, base64ToUint8(userKey.encrypted_key));
+                  const plaintext = await blowfishDecrypt(base64ToUint8(h.encrypted_message), sessionKey, base64ToUint8(h.iv));
+                  decryptedMessages.push({
+                    id: `${h._id}`,
+                    sender_username: h.sender_username,
+                    plaintext: plaintext,
+                    ts: new Date(h.timestamp).getTime(),
+                    key_version: h.key_version,
+                  });
+                } catch (e) {
+                  decryptedMessages.push({
+                    id: `${h._id}`,
+                    sender_username: h.sender_username,
+                    plaintext: `[Could not decrypt message]`,
+                    ts: new Date(h.timestamp).getTime(),
+                    error: true,
+                  });
+                }
+              }
+            }
+          }
+          setMessages(decryptedMessages);
+        }
+      } catch (error) {
+        console.error("Polling failed:", error);
+        // Opcional: notificar o usuário sobre a falha na atualização
+        // setNotify({ type: 'error', text: 'Falha ao sincronizar mensagens.' });
+      }
+    };
+
+    // Busca imediatamente ao abrir a conversa
+    fetchAndDecrypt();
+
+    // Configura o intervalo para buscar a cada 500ms
+    const intervalId = setInterval(fetchAndDecrypt, 500);
+
+    // Função de limpeza: para o intervalo quando o chat ativo muda ou o componente é desmontado
+    return () => {
+      clearInterval(intervalId);
+    };
+  }, [peer, activeGroup, token, decryptionKey, me]);
+
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -173,9 +331,75 @@ export default function Chat({ me, token, onLogout }) {
 
     try {
       if (peer) {
-        await sendMessage(token, peer, text);
+        if (!myPrivateKey) {
+          setNotify({
+            type: "error",
+            text: "Please upload your private key to send direct messages.",
+          });
+          setMessages((currentMessages) =>
+            currentMessages.filter((m) => m.id !== optimisticMessage.id)
+          );
+          return;
+        }
+        const recipientPublicKeyPem = await getUserPublicKey(token, peer);
+        const recipientPublicKey = await importRsaPublicKey(
+          recipientPublicKeyPem
+        );
+        const senderPublicKey = await importRsaPublicKey(myPublicKey);
+
+        const sessionKey = generateRandomBytes(16); // 128-bit key for Blowfish
+        const iv = generateRandomBytes(8); // 64-bit IV for Blowfish
+
+        const encryptedMessage = await blowfishEncrypt(text, sessionKey, iv);
+        const encryptedSessionKeyForRecipient = await rsaEncrypt(
+          recipientPublicKey,
+          sessionKey
+        );
+        const encryptedSessionKeyForSender = await rsaEncrypt(
+          senderPublicKey,
+          sessionKey
+        );
+
+        await sendMessage(
+          token,
+          peer,
+          uint8ToBase64(encryptedMessage),
+          uint8ToBase64(encryptedSessionKeyForRecipient),
+          uint8ToBase64(encryptedSessionKeyForSender),
+          uint8ToBase64(iv)
+        );
       } else if (activeGroup) {
-        await groupSend(token, activeGroup.id, text);
+        if (!myPrivateKey) {
+          setNotify({
+            type: "error",
+            text: "Please upload your private key to send group messages.",
+          });
+          setMessages((currentMessages) =>
+            currentMessages.filter((m) => m.id !== optimisticMessage.id)
+          );
+          return;
+        }
+        const keyVersion = activeGroup.key_versions.find(
+          (kv) => kv.version === activeGroup.key_version
+        );
+        if (keyVersion) {
+          const userKey = keyVersion.keys.find((k) => k.username === me);
+          if (userKey) {
+            const sessionKey = await rsaDecrypt(
+              decryptionKey,
+              base64ToUint8(userKey.encrypted_key)
+            );
+            const iv = generateRandomBytes(8);
+            const encryptedMessage = await blowfishEncrypt(text, sessionKey, iv);
+            await groupSend(
+              token,
+              activeGroup.id,
+              uint8ToBase64(encryptedMessage),
+              uint8ToBase64(iv),
+              activeGroup.key_version
+            );
+          }
+        }
       } else {
         setNotify({
           type: "error",
@@ -286,7 +510,9 @@ export default function Chat({ me, token, onLogout }) {
       setGroups(gl);
       setRemoveUser("");
       const updated = gl.find((gg) => gg.id === activeGroup.id);
-      if (updated) setActiveGroup(updated);
+      if (updated) {
+        setActiveGroup(updated);
+      }
       setNotify({
         type: "success",
         text: "Membro removido e chaves atualizadas.",
@@ -325,7 +551,9 @@ export default function Chat({ me, token, onLogout }) {
       const gl = await listGroups(token);
       setGroups(gl);
       const updated = gl.find((gg) => gg.id === activeGroup.id);
-      if (updated) setActiveGroup(updated);
+      if (updated) {
+        setActiveGroup(updated);
+      }
       setAddUserInput("");
       setNotify({
         type: "success",
@@ -338,6 +566,67 @@ export default function Chat({ me, token, onLogout }) {
     }
   }
 
+  async function selectGroup(g) {
+    setActiveGroup(g);
+    setPeer(null);
+    setPeerInput("");
+    setMessages([]); // Limpa mensagens antigas
+
+    try {
+      const hist = await groupHistory(token, g.id);
+      if (!decryptionKey) {
+        setNotify({
+          type: "error",
+          text: "Chave privada não encontrada para descriptografar mensagens.",
+        });
+        return;
+      }
+      const decryptedMessages = [];
+      for (const h of hist.messages) {
+        const keyVersion = hist.key_versions.find(
+          (kv) => kv.version === h.key_version
+        );
+        if (keyVersion) {
+          const userKey = keyVersion.keys.find((k) => k.username === me);
+          if (userKey) {
+            try {
+              const sessionKey = await rsaDecrypt(
+                decryptionKey,
+                base64ToUint8(userKey.encrypted_key)
+              );
+              const plaintext = await blowfishDecrypt(
+                base64ToUint8(h.encrypted_message),
+                sessionKey,
+                base64ToUint8(h.iv)
+              );
+              decryptedMessages.push({
+                id: `${h._id}`,
+                sender_username: h.sender_username,
+                plaintext: plaintext,
+                ts: new Date(h.timestamp).getTime(),
+                key_version: h.key_version,
+              });
+            } catch (e) {
+              console.error("Failed to decrypt group message:", e);
+              decryptedMessages.push({
+                id: `${h._id}`,
+                sender_username: h.sender_username,
+                plaintext: `[Could not decrypt message: ${e.message}]`,
+                ts: new Date(h.timestamp).getTime(),
+                error: true,
+              });
+            }
+          }
+        }
+      }
+      setMessages(decryptedMessages);
+    } catch (e) {
+      setMessages([]);
+      setNotify({ type: "error", text: "Falha ao carregar histórico do grupo." });
+    }
+  }
+
+
   return (
     <div className="page">
       <aside className="panel left">
@@ -346,6 +635,7 @@ export default function Chat({ me, token, onLogout }) {
             <div className="me-name">{me}</div>
             <div className="muted">online</div>
           </div>
+
         </div>
 
         <div className="section">Pessoas</div>
@@ -372,11 +662,7 @@ export default function Chat({ me, token, onLogout }) {
               className={`user-tile ${
                 activeGroup?.id === g.id ? "active" : ""
               }`}
-              onClick={() => {
-                setActiveGroup(g);
-                setPeer(null);
-                setPeerInput("");
-              }}
+              onClick={() => selectGroup(g)}
             >
               <span>{g.name || `Grupo ${g.id}`}</span>
               <div className="group-members-count">{g.members.length}</div>

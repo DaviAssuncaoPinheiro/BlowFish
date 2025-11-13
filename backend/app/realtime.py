@@ -1,6 +1,5 @@
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 import threading
-import json
 from typing import Dict, Set, List, Optional
 
 router = APIRouter()
@@ -34,7 +33,7 @@ class ConnectionManager:
         dead = []
         for ws in sockets:
             try:
-                await ws.send_text(json.dumps(payload))
+                await ws.send_json(payload)
             except Exception:
                 dead.append(ws)
         if dead:

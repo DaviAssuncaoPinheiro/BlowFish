@@ -14,6 +14,8 @@ export default function Login({ onAuth }) {
     return () => clearTimeout(t);
   }, [notify]);
 
+
+
   async function submit() {
     if (!username.trim() || !password.trim()) {
       setNotify({ type: "error", text: "Preencha usuário e senha." });
@@ -22,15 +24,26 @@ export default function Login({ onAuth }) {
     setBusy(true);
     try {
       const fn = tab === "login" ? login : register;
-      const token = await fn(username.trim(), password.trim());
-      onAuth({ username: username.trim(), token });
+      const data = await fn(username.trim(), password.trim());
+      onAuth({ 
+        username: username.trim(), 
+        token: data.token, 
+        privateKey: data.private_key, 
+        publicKey: data.public_key 
+      });
     } catch (e) {
-      const message = e?.response?.data?.detail || e?.response?.data?.message || e?.message || "Falha na operação";
+      const message =
+        e?.response?.data?.detail ||
+        e?.response?.data?.message ||
+        e?.message ||
+        "Falha na operação";
       setNotify({ type: "error", text: message });
     } finally {
       setBusy(false);
     }
   }
+
+
 
   return (
     <div className="auth-wrap">

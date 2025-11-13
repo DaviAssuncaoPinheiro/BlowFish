@@ -1,14 +1,12 @@
 from fastapi import APIRouter, HTTPException, Depends
-import sqlite3
-import os
+from datetime import datetime
+from bson import ObjectId
 import base64
-#so pra dar commit
-from cryptography.hazmat.primitives import serialization, hashes
-from cryptography.hazmat.primitives.asymmetric import padding
-from Crypto.Cipher import Blowfish
-from Crypto.Util.Padding import pad, unpad
-from .db import get_conn
+
+from .db import get_db
 from .auth import auth_required
+from .schemas import DirectMessageIn
+from .crypto_utils import decrypt_with_vault_secret, rsa_decrypt, blowfish_decrypt
 
 try:
     from .realtime import manager
@@ -17,184 +15,85 @@ except Exception:
 
 router = APIRouter()
 
-
-def fetch_user_public_key(conn, username: str):
-    cur = conn.cursor()
-    cur.execute("SELECT public_key FROM users WHERE username = ?", (username,))
-    row = cur.fetchone()
-    return row["public_key"] if row else None
-
-
-def fetch_user_private_key(conn, username: str):
-    cur = conn.cursor()
-    cur.execute("SELECT private_key FROM users WHERE username = ?", (username,))
-    row = cur.fetchone()
-    return row["private_key"] if row else None
-
-
-def rsa_encrypt_with_pem(public_pem: str, plaintext: bytes) -> bytes:
-    pub = serialization.load_pem_public_key(public_pem.encode())
-    return pub.encrypt(
-        plaintext,
-        padding.OAEP(
-            mgf=padding.MGF1(algorithm=hashes.SHA256()),
-            algorithm=hashes.SHA256(),
-            label=None,
-        ),
-    )
-
-
-def rsa_decrypt_with_pem(private_pem: str, ciphertext: bytes) -> bytes:
-    priv = serialization.load_pem_private_key(private_pem.encode(), password=None)
-    return priv.decrypt(
-        ciphertext,
-        padding.OAEP(
-            mgf=padding.MGF1(algorithm=hashes.SHA256()),
-            algorithm=hashes.SHA256(),
-            label=None,
-        ),
-    )
-
-
 @router.post("/messages/send")
-async def send_dm(data: dict, sender: str = Depends(auth_required)):
-    to = data.get("to")
-    message = data.get("message", "")
-    if not to or not message:
-        raise HTTPException(
-            status_code=400, detail="Destinatário e mensagem são obrigatórios"
-        )
+async def send_dm(data: DirectMessageIn, sender: str = Depends(auth_required)):
+    db = get_db()
+    
+    recipient = db.users.find_one({"username": data.to})
+    if not recipient:
+        raise HTTPException(status_code=404, detail="Destinatário não encontrado")
 
-    print(f"\n[CRYPTO-DEBUG] ===== INICIANDO ENVIO DE MENSAGEM: {sender} -> {to} =====")
-    conn = get_conn()
-    try:
-        cur = conn.cursor()
-        recipient_pub = fetch_user_public_key(conn, to)
-        sender_pub = fetch_user_public_key(conn, sender)
-        if not recipient_pub or not sender_pub:
-            raise HTTPException(status_code=400, detail="Chave pública não encontrada")
+    print("\n--- [MESSAGES] Nova mensagem direta recebida ---")
+    print(f"De: {sender} | Para: {data.to}")
+    print(f"Mensagem Criptografada: {data.encrypted_message}")
 
-        session_key = os.urandom(16)
-        print(
-            f"[CRYPTO-DEBUG] 1. Chave de sessão única (Blowfish) criada: {session_key.hex()}"
-        )
-
-        iv = os.urandom(8)
-        cipher = Blowfish.new(session_key, Blowfish.MODE_CBC, iv=iv)
-        padded = pad(message.encode(), Blowfish.block_size)
-        ciphertext = cipher.encrypt(padded)
-        ciphertext_b64 = base64.b64encode(ciphertext).decode()
-        print(
-            f"[CRYPTO-DEBUG] 2. Mensagem '{message}' criptografada com a chave de sessão. Ciphertext: {ciphertext_b64[:30]}..."
-        )
-
-        recipient_encrypted_session = rsa_encrypt_with_pem(recipient_pub, session_key)
-        sender_encrypted_session = rsa_encrypt_with_pem(sender_pub, session_key)
-        recipient_encrypted_b64 = base64.b64encode(recipient_encrypted_session).decode()
-        sender_encrypted_b64 = base64.b64encode(sender_encrypted_session).decode()
-        print(
-            f"[CRYPTO-DEBUG] 3. Chave de sessão criptografada para o destinatário '{to}' usando a chave pública dele."
-        )
-        print(
-            f"[CRYPTO-DEBUG] 4. Chave de sessão criptografada para o remetente '{sender}' usando a própria chave pública."
-        )
-
-        cur.execute(
-            "INSERT INTO messages (sender_username, receiver_username, encrypted_message, encrypted_session_key, sender_encrypted_session_key, iv) VALUES (?, ?, ?, ?, ?, ?)",
-            (
-                sender,
-                to,
-                ciphertext_b64,
-                recipient_encrypted_b64,
-                sender_encrypted_b64,
-                iv.hex(),
-            ),
-        )
-        conn.commit()
-        msg_id = cur.lastrowid
-        print(
-            f"[CRYPTO-DEBUG] 5. Mensagem e chaves criptografadas salvas no BD com ID: {msg_id}"
-        )
-
-    finally:
-        if conn:
-            conn.close()
+    msg_doc = {
+        "sender_username": sender,
+        "receiver_username": data.to,
+        "encrypted_message": data.encrypted_message,
+        "encrypted_session_key": data.encrypted_session_key,
+        "sender_encrypted_session_key": data.sender_encrypted_session_key,
+        "iv": data.iv,
+        "timestamp": datetime.utcnow(),
+    }
+    
+    result = db.direct_messages.insert_one(msg_doc)
+    msg_id = result.inserted_id
 
     payload = {
         "type": "dm",
-        "from": sender,
-        "to": to,
-        "message": message,
-        "msg_id": msg_id,
+        "_id": str(msg_id),
+        "sender_username": sender,
+        "receiver_username": data.to,
+        "encrypted_message": data.encrypted_message,
+        "encrypted_session_key": data.encrypted_session_key,
+        "sender_encrypted_session_key": data.sender_encrypted_session_key,
+        "iv": data.iv,
+        "timestamp": msg_doc['timestamp'].isoformat() + "Z",
     }
+
+    try:
+        recipient_user = db.users.find_one({"username": data.to})
+        priv_key_iv = bytes.fromhex(recipient_user["encrypted_private_key_iv"])
+        priv_key_ct = bytes.fromhex(recipient_user["encrypted_private_key_ciphertext"])
+        recipient_priv_key_pem = decrypt_with_vault_secret(priv_key_iv, priv_key_ct)
+
+        encrypted_session_key = base64.b64decode(data.encrypted_session_key)
+        session_key = rsa_decrypt(recipient_priv_key_pem.decode(), encrypted_session_key)
+        print(f"--- [DEBUG] 3. Chave de sessão descriptografada com RSA.")
+
+        encrypted_message = base64.b64decode(data.encrypted_message)
+        iv_bytes = base64.b64decode(data.iv)
+        plaintext = blowfish_decrypt(iv_bytes, encrypted_message, session_key)
+        print(f"--- [DEBUG] 4. MENSAGEM DESCRIPTOGRAFADA COM BLOWFISH: '{plaintext}'")
+
+    except Exception as e:
+        print(f"--- [DEBUG] Falha ao tentar descriptografar a mensagem no backend: {e}")
+
     if manager:
-        await manager.send_to_user(to, payload)
+        await manager.send_to_user(data.to, payload)
+        print(f"--- [MESSAGES] Mensagem encaminhada para '{data.to}' via WebSocket.")
         await manager.send_to_user(sender, payload)
-    print("[CRYPTO-DEBUG] ===== FIM DO ENVIO DE MENSAGEM =====\n")
-    return {"ok": True, "id": msg_id}
+
+    return {"ok": True, "id": str(msg_id)}
 
 
 @router.get("/messages/history")
 async def history(peer: str, me: str = Depends(auth_required)):
-    print(f"\n[CRYPTO-DEBUG] ===== CARREGANDO HISTÓRICO: {me} <-> {peer} =====")
-    conn = get_conn()
-    conn.row_factory = sqlite3.Row
-    cur = conn.cursor()
-
-    cur.execute(
-        "SELECT * FROM messages WHERE (sender_username = ? AND receiver_username = ?) OR (sender_username = ? AND receiver_username = ?) ORDER BY timestamp ASC",
-        (me, peer, peer, me),
-    )
-    rows = cur.fetchall()
-
-    out = []
-    my_priv_key = fetch_user_private_key(conn, me)
-    print(
-        f"[CRYPTO-DEBUG] 1. Buscando chave privada de '{me}' para descriptografar mensagens."
-    )
-
-    for r in rows:
-        plaintext = "<Erro>"
-        encrypted_session_key_to_use = None
-
-        if r["sender_username"] == me:
-            encrypted_session_key_to_use = r["sender_encrypted_session_key"]
-            print(
-                f"[CRYPTO-DEBUG] 2. Descriptografando mensagem ENVIADA (ID: {r['id']}). Usando a 'sender_encrypted_session_key'."
-            )
-        else:
-            encrypted_session_key_to_use = r["encrypted_session_key"]
-            print(
-                f"[CRYPTO-DEBUG] 2. Descriptografando mensagem RECEBIDA de '{r['sender_username']}' (ID: {r['id']}). Usando a 'encrypted_session_key'."
-            )
-
-        if my_priv_key and encrypted_session_key_to_use:
-            try:
-                enc_session_key = base64.b64decode(encrypted_session_key_to_use)
-                session_key = rsa_decrypt_with_pem(my_priv_key, enc_session_key)
-                print(
-                    f"[CRYPTO-DEBUG] 3. Chave de sessão descriptografada com sucesso: {session_key.hex()}"
-                )
-
-                iv = bytes.fromhex(r["iv"])
-                ciphertext = base64.b64decode(r["encrypted_message"])
-                cipher = Blowfish.new(session_key, Blowfish.MODE_CBC, iv=iv)
-                decrypted_padded = cipher.decrypt(ciphertext)
-                plaintext = unpad(decrypted_padded, Blowfish.block_size).decode()
-                print(f"[CRYPTO-DEBUG] 4. Mensagem descriptografada: '{plaintext}'")
-            except Exception as e:
-                plaintext = f"<Falha na descriptografia: {e}>"
-                print(f"[CRYPTO-DEBUG] 4. ERRO ao descriptografar mensagem: {e}")
-
-        out.append(
-            {
-                "id": r["id"],
-                "sender_username": r["sender_username"],
-                "plaintext": plaintext,
-                "timestamp": r["timestamp"],
-            }
-        )
-
-    conn.close()
-    print("[CRYPTO-DEBUG] ===== FIM DO CARREGAMENTO DO HISTÓRICO =====\n")
-    return out
+    db = get_db()
+    
+    query = {
+        "$or": [
+            {"sender_username": me, "receiver_username": peer},
+            {"sender_username": peer, "receiver_username": me},
+        ]
+    }
+    
+    messages_cursor = db.direct_messages.find(query).sort("timestamp", 1)
+    
+    messages = []
+    for msg in messages_cursor:
+        msg["_id"] = str(msg["_id"])
+        messages.append(msg)
+        
+    return messages
