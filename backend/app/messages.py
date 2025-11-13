@@ -2,7 +2,7 @@ from fastapi import APIRouter, HTTPException, Depends
 import sqlite3
 import os
 import base64
-
+#so pra dar commit
 from cryptography.hazmat.primitives import serialization, hashes
 from cryptography.hazmat.primitives.asymmetric import padding
 from Crypto.Cipher import Blowfish
