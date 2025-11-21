@@ -4,13 +4,12 @@ import base64
 import os
 print(f"VAULT_SECRET from env: {os.getenv('VAULT_SECRET')}")
 
-
-
 from fastapi import FastAPI, HTTPException, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from .db import get_db, create_indexes
 from .schemas import RegisterIn, LoginIn, TokenOut, UserOut
-from .auth import make_hash, verify_hash, create_token, auth_required, generate_and_store_user_keys
+# MODIFICADO
+from .auth import make_hash, verify_hash, create_token, auth_required, generate_and_store_user_keys, router as auth_router
 from .crypto_utils import decrypt_with_password, decrypt_with_vault_secret
 from .messages import router as messages_router
 from .realtime import router as ws_router
@@ -69,8 +68,11 @@ def register(data: RegisterIn):
         print(f"--- [MAIN] Registro bem-sucedido para '{username}'. Enviando chaves para o cliente.")
         print(f"--- [MAIN] Chave Pública (Registro):\n{key_data['public_key']}")
         print(f"--- [MAIN] Chave Privada (Registro):\n{key_data['private_key_pem']}")
+        
+        # RETORNO ATUALIZADO
         return {
             "token": create_token(username), 
+            "username": username, # ADICIONADO
             "private_key": key_data["private_key_pem"], 
             "public_key": key_data["public_key"]
         }
@@ -109,8 +111,11 @@ def login(data: LoginIn):
         print(f"--- [MAIN] Login bem-sucedido para '{username}'. Enviando chaves para o cliente.")
         print(f"--- [MAIN] Chave Pública (Login):\n{user['public_key']}")
         print(f"--- [MAIN] Chave Privada Descriptografada (Login):\n{private_key_pem}")
+        
+        # RETORNO ATUALIZADO
         return {
             "token": create_token(username), 
+            "username": username, # ADICIONADO
             "private_key": private_key_pem, 
             "public_key": user["public_key"]
         }
@@ -132,6 +137,9 @@ def get_user_public_key(username: str, me: str = Depends(auth_required)):
     if not user or not user.get("public_key"):
         raise HTTPException(status_code=404, detail="Public key not found for user")
     return {"public_key": user["public_key"]}
+
+# ADICIONADO (Certifique-se que esta linha existe)
+app.include_router(auth_router, prefix="/auth", tags=["auth"]) 
 
 app.include_router(messages_router, dependencies=[Depends(auth_required)])
 app.include_router(groups_router, dependencies=[Depends(auth_required)])

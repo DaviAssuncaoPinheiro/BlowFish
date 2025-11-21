@@ -11,6 +11,7 @@ class LoginIn(BaseModel):
 
 class TokenOut(BaseModel):
     token: str
+    username: str
     private_key: Optional[str] = None
     public_key: Optional[str] = None
 
@@ -27,6 +28,7 @@ class DirectMessageIn(BaseModel):
     encrypted_session_key: str
     sender_encrypted_session_key: str
     iv: str
+    integrity_hash: str # <--- NOVO CAMPO
 
 class SendMessageIn(BaseModel):
     to_username: str
@@ -51,9 +53,6 @@ class GroupOut(BaseModel):
 
 class GroupSendIn(BaseModel):
     conversation_id: int
-    message: str
-
-class GroupSendIn(BaseModel):
     message: str
 
 class GroupRemoveIn(BaseModel):

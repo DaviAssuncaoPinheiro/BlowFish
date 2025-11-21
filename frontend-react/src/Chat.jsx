@@ -11,7 +11,6 @@ import {
   groupRemoveMember,
   groupAddMember,
   getUserPublicKey,
-  groupHistory as fetchGroupHistory, // Renomeando para evitar conflito de nome
 } from "./api";
 import {
   rsaEncrypt,
@@ -23,7 +22,9 @@ import {
   base64ToUint8,
   importRsaPrivateKey,
   importRsaPublicKey,
+  generateHMAC // <--- IMPORTADO
 } from "./crypto";
+
 export default function Chat({ me, token, onLogout, privateKey, publicKey }) {
   console.log("Chat component props: me=", me, "token=", token);
   const [users, setUsers] = useState([]);
@@ -85,43 +86,7 @@ export default function Chat({ me, token, onLogout, privateKey, publicKey }) {
   useEffect(() => {
     if (!me) return;
     wsRef.current = connectSocket(me, async (data) => {
-      /* if (data.type === "dm") {
-        if (peer && (data.sender_username === peer || data.receiver_username === peer)) {
-          try {
-            if (!decryptionKey) {
-              console.error("Decryption key not available for incoming message.");
-              return;
-            }
-            
-            const isSender = data.sender_username === me;
-            const encryptedKey = isSender
-              ? data.sender_encrypted_session_key
-              : data.encrypted_session_key;
-
-            const sessionKey = await rsaDecrypt(
-              decryptionKey,
-              base64ToUint8(encryptedKey)
-            );
-            const plaintext = await blowfishDecrypt(
-              base64ToUint8(data.encrypted_message),
-              sessionKey,
-              base64ToUint8(data.iv)
-            );
-
-            setMessages((m) => [
-              ...m,
-              {
-                id: `${data._id || Date.now()}`,
-                sender_username: data.sender_username,
-                plaintext: plaintext,
-                ts: new Date(data.timestamp).getTime(),
-              },
-            ]);
-          } catch (e) {
-            console.error("Failed to decrypt incoming DM:", e);
-          }
-        }
-      } else */ if (data.type === "group") {
+      if (data.type === "group") {
         if (data.system_note) {
           setNotify({ type: "success", text: data.system_note });
           listGroups(token)
@@ -141,6 +106,7 @@ export default function Chat({ me, token, onLogout, privateKey, publicKey }) {
     };
   }, [peer, activeGroup, me, token]);
 
+  // Carregar histórico ao selecionar Peer
   useEffect(() => {
     if (peer) {
       setActiveGroup(null);
@@ -166,6 +132,15 @@ export default function Chat({ me, token, onLogout, privateKey, publicKey }) {
                 decryptionKey,
                 base64ToUint8(encryptedKey)
               );
+
+             
+              if (h.integrity_hash) {
+                const calculatedHash = generateHMAC(h.encrypted_message, h.iv, sessionKey);
+                if (calculatedHash !== h.integrity_hash) {
+                  throw new Error("INTEGRITY_CHECK_FAILED");
+                }
+              }
+
               const plaintext = await blowfishDecrypt(
                 base64ToUint8(h.encrypted_message),
                 sessionKey,
@@ -179,11 +154,14 @@ export default function Chat({ me, token, onLogout, privateKey, publicKey }) {
               });
             } catch (e) {
               console.error("Failed to decrypt DM:", e);
-              // Optionally, show a placeholder for undecryptable messages
+              let errorMsg = "[Could not decrypt message]";
+              if (e.message === "INTEGRITY_CHECK_FAILED") {
+                errorMsg = "🚫 ALERTA: Mensagem adulterada ou corrompida!";
+              }
               decryptedMessages.push({
                 id: `${h._id}`,
                 sender_username: h.sender_username,
-                plaintext: `[Could not decrypt message: ${e.message}]`,
+                plaintext: errorMsg,
                 ts: new Date(h.timestamp).getTime(),
                 error: true,
               });
@@ -195,15 +173,14 @@ export default function Chat({ me, token, onLogout, privateKey, publicKey }) {
     }
   }, [peer, token, decryptionKey]);
 
-  // Implementação de Polling sugerida
+  // Implementação de Polling e Descriptografia
   useEffect(() => {
     if (!peer && !activeGroup) {
-      return; // Não faz nada se nenhum chat estiver ativo
+      return; 
     }
 
     const fetchAndDecrypt = async () => {
       if (!decryptionKey) {
-        // Não tenta buscar se a chave de descriptografia não estiver pronta
         return;
       }
 
@@ -218,6 +195,16 @@ export default function Chat({ me, token, onLogout, privateKey, publicKey }) {
                 ? h.sender_encrypted_session_key
                 : h.encrypted_session_key;
               const sessionKey = await rsaDecrypt(decryptionKey, base64ToUint8(encryptedKey));
+              
+              // --- VERIFICAÇÃO DE INTEGRIDADE (HMAC) ---
+              if (h.integrity_hash) {
+                const calculatedHash = generateHMAC(h.encrypted_message, h.iv, sessionKey);
+                if (calculatedHash !== h.integrity_hash) {
+                  throw new Error("INTEGRITY_CHECK_FAILED");
+                }
+              }
+              // -------------------------------------------
+
               const plaintext = await blowfishDecrypt(base64ToUint8(h.encrypted_message), sessionKey, base64ToUint8(h.iv));
               decryptedMessages.push({
                 id: `${h._id}`,
@@ -226,10 +213,14 @@ export default function Chat({ me, token, onLogout, privateKey, publicKey }) {
                 ts: new Date(h.timestamp).getTime(),
               });
             } catch (e) {
+              let errorMsg = "[Could not decrypt message]";
+              if (e.message === "INTEGRITY_CHECK_FAILED") {
+                errorMsg = "🚫 ALERTA: Mensagem adulterada ou corrompida!";
+              }
               decryptedMessages.push({
                 id: `${h._id}`,
                 sender_username: h.sender_username,
-                plaintext: `[Could not decrypt message]`,
+                plaintext: errorMsg,
                 ts: new Date(h.timestamp).getTime(),
                 error: true,
               });
@@ -248,6 +239,9 @@ export default function Chat({ me, token, onLogout, privateKey, publicKey }) {
               if (userKey) {
                 try {
                   const sessionKey = await rsaDecrypt(decryptionKey, base64ToUint8(userKey.encrypted_key));
+                  
+                  // (Opcional: Implementar integridade para grupos aqui também futuramente)
+                  
                   const plaintext = await blowfishDecrypt(base64ToUint8(h.encrypted_message), sessionKey, base64ToUint8(h.iv));
                   decryptedMessages.push({
                     id: `${h._id}`,
@@ -272,18 +266,12 @@ export default function Chat({ me, token, onLogout, privateKey, publicKey }) {
         }
       } catch (error) {
         console.error("Polling failed:", error);
-        // Opcional: notificar o usuário sobre a falha na atualização
-        // setNotify({ type: 'error', text: 'Falha ao sincronizar mensagens.' });
       }
     };
 
-    // Busca imediatamente ao abrir a conversa
     fetchAndDecrypt();
+    const intervalId = setInterval(fetchAndDecrypt, 2000); // Aumentei um pouco o intervalo para não sobrecarregar
 
-    // Configura o intervalo para buscar a cada 500ms
-    const intervalId = setInterval(fetchAndDecrypt, 500);
-
-    // Função de limpeza: para o intervalo quando o chat ativo muda ou o componente é desmontado
     return () => {
       clearInterval(intervalId);
     };
@@ -350,7 +338,15 @@ export default function Chat({ me, token, onLogout, privateKey, publicKey }) {
         const sessionKey = generateRandomBytes(16); // 128-bit key for Blowfish
         const iv = generateRandomBytes(8); // 64-bit IV for Blowfish
 
-        const encryptedMessage = await blowfishEncrypt(text, sessionKey, iv);
+        const encryptedMessageUint8 = await blowfishEncrypt(text, sessionKey, iv);
+        const encryptedMessageB64 = uint8ToBase64(encryptedMessageUint8);
+        const ivB64 = uint8ToBase64(iv);
+
+        // --- GERAÇÃO DO HASH DE INTEGRIDADE ---
+        // Assina o IV + Mensagem Criptografada usando a chave da sessão
+        const integrityHash = generateHMAC(encryptedMessageB64, ivB64, sessionKey);
+        // --------------------------------------
+
         const encryptedSessionKeyForRecipient = await rsaEncrypt(
           recipientPublicKey,
           sessionKey
@@ -363,12 +359,14 @@ export default function Chat({ me, token, onLogout, privateKey, publicKey }) {
         await sendMessage(
           token,
           peer,
-          uint8ToBase64(encryptedMessage),
+          encryptedMessageB64,
           uint8ToBase64(encryptedSessionKeyForRecipient),
           uint8ToBase64(encryptedSessionKeyForSender),
-          uint8ToBase64(iv)
+          ivB64,
+          integrityHash // <--- ENVIANDO O HASH
         );
       } else if (activeGroup) {
+        // Lógica de grupo (mantida igual por enquanto, pode expandir depois)
         if (!myPrivateKey) {
           setNotify({
             type: "error",
@@ -390,11 +388,11 @@ export default function Chat({ me, token, onLogout, privateKey, publicKey }) {
               base64ToUint8(userKey.encrypted_key)
             );
             const iv = generateRandomBytes(8);
-            const encryptedMessage = await blowfishEncrypt(text, sessionKey, iv);
+            const encryptedMessageUint8 = await blowfishEncrypt(text, sessionKey, iv);
             await groupSend(
               token,
               activeGroup.id,
-              uint8ToBase64(encryptedMessage),
+              uint8ToBase64(encryptedMessageUint8),
               uint8ToBase64(iv),
               activeGroup.key_version
             );
@@ -431,7 +429,8 @@ export default function Chat({ me, token, onLogout, privateKey, publicKey }) {
         hist.map((h) => ({
           id: `${h.id}`,
           sender_username: h.sender_username,
-          plaintext: h.plaintext,
+          plaintext: h.plaintext, // Aqui assumimos que getHistory descriptografa? Não, o componente faz.
+          // O código original tinha uma lógica simplificada aqui, mas o useEffect carrega a verdade.
           ts: new Date(h.timestamp).getTime(),
         }))
       );
@@ -570,7 +569,7 @@ export default function Chat({ me, token, onLogout, privateKey, publicKey }) {
     setActiveGroup(g);
     setPeer(null);
     setPeerInput("");
-    setMessages([]); // Limpa mensagens antigas
+    setMessages([]); 
 
     try {
       const hist = await groupHistory(token, g.id);

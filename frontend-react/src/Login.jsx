@@ -1,10 +1,10 @@
 import { useState, useEffect } from "react";
-import { login, register } from "./api";
+// Importações de API atualizadas
+import { sendGoogleCode } from "./api";
+// Importação do hook de login do Google
+import { useGoogleLogin } from "@react-oauth/google";
 
 export default function Login({ onAuth }) {
-  const [tab, setTab] = useState("login");
-  const [username, setUsername] = useState("");
-  const [password, setPassword] = useState("");
   const [busy, setBusy] = useState(false);
   const [notify, setNotify] = useState(null);
 
@@ -14,73 +14,61 @@ export default function Login({ onAuth }) {
     return () => clearTimeout(t);
   }, [notify]);
 
-
-
-  async function submit() {
-    if (!username.trim() || !password.trim()) {
-      setNotify({ type: "error", text: "Preencha usuário e senha." });
-      return;
-    }
-    setBusy(true);
-    try {
-      const fn = tab === "login" ? login : register;
-      const data = await fn(username.trim(), password.trim());
-      onAuth({ 
-        username: username.trim(), 
-        token: data.token, 
-        privateKey: data.private_key, 
-        publicKey: data.public_key 
-      });
-    } catch (e) {
-      const message =
-        e?.response?.data?.detail ||
-        e?.response?.data?.message ||
-        e?.message ||
-        "Falha na operação";
-      setNotify({ type: "error", text: message });
-    } finally {
-      setBusy(false);
-    }
-  }
-
-
+  // Função de login com Google
+  const handleGoogleLogin = useGoogleLogin({
+    // 'flow: "auth-code"' é a parte mais importante.
+    // Ele nos dá um 'code' para enviar ao backend.
+    flow: "auth-code",
+    onSuccess: async (codeResponse) => {
+      console.log("Google respondeu com o código:", codeResponse.code);
+      setBusy(true);
+      try {
+        // Envia o código para o nosso backend
+        const data = await sendGoogleCode(codeResponse.code);
+        
+        // 'data' é o nosso TokenOut (token, username, private_key, public_key)
+        // A função onAuth do App.jsx espera { username, token, privateKey, publicKey }
+        onAuth({
+          username: data.username, // O username vem do backend
+          token: data.token,
+          privateKey: data.private_key,
+          publicKey: data.public_key,
+        });
+        
+      } catch (e) {
+        const message =
+          e?.response?.data?.detail || e?.message || "Falha na operação";
+        setNotify({ type: "error", text: message });
+      } finally {
+        setBusy(false);
+      }
+    },
+    onError: (error) => {
+      console.error("Falha no login com Google:", error);
+      setNotify({ type: "error", text: "Falha no login com Google." });
+    },
+  });
 
   return (
     <div className="auth-wrap">
       <div className="glass-card auth-card enter-pop">
         <div className="title" style={{ height: 2 }}></div>
-        <div style={{ display: "flex", gap: 12, alignItems: "center", marginBottom: 6 }}>
+        <div style={{ display: "flex", gap: 12, alignItems: "center", marginBottom: 20 }}>
           <h2 style={{ margin: 0, fontSize: 20, fontWeight: 800 }}>Acessar</h2>
           <div style={{ color: "var(--muted)", fontSize: 13 }}>Mensagens seguras</div>
         </div>
-        <div className="tabs">
-          <button className={tab === "login" ? "active" : ""} onClick={() => setTab("login")}>Entrar</button>
-          <button className={tab === "register" ? "active" : ""} onClick={() => setTab("register")}>Registrar</button>
-          <div className={`pill ${tab}`} />
-        </div>
+        
+        {/* O formulário antigo foi removido */}
+        
+        <button 
+          className="primary" 
+          onClick={() => handleGoogleLogin()} 
+          disabled={busy}
+          style={{ width: '100%', marginTop: 16 }}
+        >
+          {busy ? "Aguarde..." : "Entrar com Google"}
+        </button>
 
-        <div className="form" style={{ marginTop: 16 }}>
-          <div className="input">
-            <input
-              placeholder="Usuário"
-              value={username}
-              onChange={(e) => setUsername(e.target.value)}
-              onKeyDown={(e) => e.key === "Enter" && submit()}
-            />
-          </div>
-          <div className="input">
-            <input
-              placeholder="Senha"
-              type="password"
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              onKeyDown={(e) => e.key === "Enter" && submit()}
-            />
-          </div>
-          <button className="primary" onClick={submit} disabled={busy}>
-            {busy ? "Aguarde..." : tab === "login" ? "Entrar" : "Criar conta"}
-          </button>
-        </div>
       </div>
 
       <div className="bg fx-a" />

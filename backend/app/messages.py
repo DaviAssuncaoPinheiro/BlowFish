@@ -26,6 +26,7 @@ async def send_dm(data: DirectMessageIn, sender: str = Depends(auth_required)):
     print("\n--- [MESSAGES] Nova mensagem direta recebida ---")
     print(f"De: {sender} | Para: {data.to}")
     print(f"Mensagem Criptografada: {data.encrypted_message}")
+    print(f"Hash de Integridade (HMAC): {data.integrity_hash}")
 
     msg_doc = {
         "sender_username": sender,
@@ -34,6 +35,7 @@ async def send_dm(data: DirectMessageIn, sender: str = Depends(auth_required)):
         "encrypted_session_key": data.encrypted_session_key,
         "sender_encrypted_session_key": data.sender_encrypted_session_key,
         "iv": data.iv,
+        "integrity_hash": data.integrity_hash, # <--- Salvando no banco
         "timestamp": datetime.utcnow(),
     }
     
@@ -49,26 +51,29 @@ async def send_dm(data: DirectMessageIn, sender: str = Depends(auth_required)):
         "encrypted_session_key": data.encrypted_session_key,
         "sender_encrypted_session_key": data.sender_encrypted_session_key,
         "iv": data.iv,
+        "integrity_hash": data.integrity_hash, # <--- Enviando via WebSocket
         "timestamp": msg_doc['timestamp'].isoformat() + "Z",
     }
 
+    # Tenta descriptografar no backend apenas para debug (opcional)
     try:
         recipient_user = db.users.find_one({"username": data.to})
-        priv_key_iv = bytes.fromhex(recipient_user["encrypted_private_key_iv"])
-        priv_key_ct = bytes.fromhex(recipient_user["encrypted_private_key_ciphertext"])
-        recipient_priv_key_pem = decrypt_with_vault_secret(priv_key_iv, priv_key_ct)
+        if recipient_user and "encrypted_private_key_iv" in recipient_user:
+            priv_key_iv = bytes.fromhex(recipient_user["encrypted_private_key_iv"])
+            priv_key_ct = bytes.fromhex(recipient_user["encrypted_private_key_ciphertext"])
+            recipient_priv_key_pem = decrypt_with_vault_secret(priv_key_iv, priv_key_ct)
 
-        encrypted_session_key = base64.b64decode(data.encrypted_session_key)
-        session_key = rsa_decrypt(recipient_priv_key_pem.decode(), encrypted_session_key)
-        print(f"--- [DEBUG] 3. Chave de sessão descriptografada com RSA.")
+            encrypted_session_key = base64.b64decode(data.encrypted_session_key)
+            session_key = rsa_decrypt(recipient_priv_key_pem.decode(), encrypted_session_key)
+            print(f"--- [DEBUG] 3. Chave de sessão descriptografada com RSA.")
 
-        encrypted_message = base64.b64decode(data.encrypted_message)
-        iv_bytes = base64.b64decode(data.iv)
-        plaintext = blowfish_decrypt(iv_bytes, encrypted_message, session_key)
-        print(f"--- [DEBUG] 4. MENSAGEM DESCRIPTOGRAFADA COM BLOWFISH: '{plaintext}'")
+            encrypted_message = base64.b64decode(data.encrypted_message)
+            iv_bytes = base64.b64decode(data.iv)
+            plaintext = blowfish_decrypt(iv_bytes, encrypted_message, session_key)
+            print(f"--- [DEBUG] 4. MENSAGEM DESCRIPTOGRAFADA COM BLOWFISH: '{plaintext}'")
 
     except Exception as e:
-        print(f"--- [DEBUG] Falha ao tentar descriptografar a mensagem no backend: {e}")
+        print(f"--- [DEBUG] Falha ao tentar descriptografar a mensagem no backend (isso é esperado se o vault não tiver a chave): {e}")
 
     if manager:
         await manager.send_to_user(data.to, payload)

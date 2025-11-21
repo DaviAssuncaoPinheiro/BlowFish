@@ -116,6 +116,20 @@ async function rsaDecrypt(privateKey, ciphertext) {
     return new Uint8Array(decrypted);
 }
 
+function generateHMAC(ciphertextBase64, ivBase64, sessionKeyUint8) {
+    // Converte a chave de sessão (Uint8Array) para o formato do CryptoJS
+    const keyWord = uint8ToWordArray(sessionKeyUint8);
+    
+    // Concatenamos IV e Ciphertext para garantir que ambos estão íntegros
+    const dataToSign = ivBase64 + ciphertextBase64;
+    
+    // Gera o hash SHA256 usando a chave (HMAC)
+    const hmac = CryptoJS.HmacSHA256(dataToSign, keyWord);
+    
+    // Retorna em Base64
+    return CryptoJS.enc.Base64.stringify(hmac);
+}
+
 export {
     base64ToUint8,
     uint8ToBase64,
@@ -127,5 +141,6 @@ export {
     blowfishDecrypt,
     generateRandomBytes,
     textEncoder,
-    textDecoder
+    textDecoder,
+    generateHMAC
 };
