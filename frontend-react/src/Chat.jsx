@@ -22,11 +22,11 @@ import {
   base64ToUint8,
   importRsaPrivateKey,
   importRsaPublicKey,
-  generateHMAC // <--- IMPORTADO
+  generateHMAC 
 } from "./crypto";
 
 export default function Chat({ me, token, onLogout, privateKey, publicKey }) {
-  console.log("Chat component props: me=", me, "token=", token);
+  //console.log("Chat component props: me=", me, "token=", token);
   const [users, setUsers] = useState([]);
   const [groups, setGroups] = useState([]);
   const [peer, setPeer] = useState(null);
@@ -133,13 +133,16 @@ export default function Chat({ me, token, onLogout, privateKey, publicKey }) {
                 base64ToUint8(encryptedKey)
               );
 
-             
+              // --- VERIFICAÇÃO DE INTEGRIDADE (HMAC) ---
               if (h.integrity_hash) {
                 const calculatedHash = generateHMAC(h.encrypted_message, h.iv, sessionKey);
                 if (calculatedHash !== h.integrity_hash) {
                   throw new Error("INTEGRITY_CHECK_FAILED");
                 }
+                // 1. DEBUG DE RECEBIMENTO (Sucesso)
+                console.log(`✅ [INTEGRIDADE - RECEBIMENTO] Msg ID ${h._id}: Hash Validado com Sucesso! A mensagem é autêntica.`); // <--- DEBUG ADICIONADO
               }
+              // -------------------------------------------
 
               const plaintext = await blowfishDecrypt(
                 base64ToUint8(h.encrypted_message),
@@ -202,6 +205,8 @@ export default function Chat({ me, token, onLogout, privateKey, publicKey }) {
                 if (calculatedHash !== h.integrity_hash) {
                   throw new Error("INTEGRITY_CHECK_FAILED");
                 }
+                // (Opcional: adicionei aqui também para garantir que apareça no polling)
+                console.log(`✅ [INTEGRIDADE - RECEBIMENTO] Msg ID ${h._id}: Hash Validado com Sucesso!`);
               }
               // -------------------------------------------
 
@@ -240,8 +245,6 @@ export default function Chat({ me, token, onLogout, privateKey, publicKey }) {
                 try {
                   const sessionKey = await rsaDecrypt(decryptionKey, base64ToUint8(userKey.encrypted_key));
                   
-                  // (Opcional: Implementar integridade para grupos aqui também futuramente)
-                  
                   const plaintext = await blowfishDecrypt(base64ToUint8(h.encrypted_message), sessionKey, base64ToUint8(h.iv));
                   decryptedMessages.push({
                     id: `${h._id}`,
@@ -270,7 +273,7 @@ export default function Chat({ me, token, onLogout, privateKey, publicKey }) {
     };
 
     fetchAndDecrypt();
-    const intervalId = setInterval(fetchAndDecrypt, 2000); // Aumentei um pouco o intervalo para não sobrecarregar
+    const intervalId = setInterval(fetchAndDecrypt, 2000); 
 
     return () => {
       clearInterval(intervalId);
@@ -335,8 +338,8 @@ export default function Chat({ me, token, onLogout, privateKey, publicKey }) {
         );
         const senderPublicKey = await importRsaPublicKey(myPublicKey);
 
-        const sessionKey = generateRandomBytes(16); // 128-bit key for Blowfish
-        const iv = generateRandomBytes(8); // 64-bit IV for Blowfish
+        const sessionKey = generateRandomBytes(16); 
+        const iv = generateRandomBytes(8); 
 
         const encryptedMessageUint8 = await blowfishEncrypt(text, sessionKey, iv);
         const encryptedMessageB64 = uint8ToBase64(encryptedMessageUint8);
@@ -345,6 +348,9 @@ export default function Chat({ me, token, onLogout, privateKey, publicKey }) {
         // --- GERAÇÃO DO HASH DE INTEGRIDADE ---
         // Assina o IV + Mensagem Criptografada usando a chave da sessão
         const integrityHash = generateHMAC(encryptedMessageB64, ivB64, sessionKey);
+        
+        // 2. DEBUG DE ENVIO
+        console.log(`📤 [INTEGRIDADE - ENVIO] HMAC Gerado: ${integrityHash}. Enviando mensagem segura.`); // <--- DEBUG ADICIONADO
         // --------------------------------------
 
         const encryptedSessionKeyForRecipient = await rsaEncrypt(
@@ -363,10 +369,9 @@ export default function Chat({ me, token, onLogout, privateKey, publicKey }) {
           uint8ToBase64(encryptedSessionKeyForRecipient),
           uint8ToBase64(encryptedSessionKeyForSender),
           ivB64,
-          integrityHash // <--- ENVIANDO O HASH
+          integrityHash 
         );
       } else if (activeGroup) {
-        // Lógica de grupo (mantida igual por enquanto, pode expandir depois)
         if (!myPrivateKey) {
           setNotify({
             type: "error",
@@ -429,8 +434,7 @@ export default function Chat({ me, token, onLogout, privateKey, publicKey }) {
         hist.map((h) => ({
           id: `${h.id}`,
           sender_username: h.sender_username,
-          plaintext: h.plaintext, // Aqui assumimos que getHistory descriptografa? Não, o componente faz.
-          // O código original tinha uma lógica simplificada aqui, mas o useEffect carrega a verdade.
+          plaintext: h.plaintext, 
           ts: new Date(h.timestamp).getTime(),
         }))
       );

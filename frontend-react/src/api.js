@@ -36,26 +36,41 @@ export async function register(username, password) {
   }
 }
 
-// Função para o Google Login
+// --- FUNÇÕES DE AUTENTICAÇÃO GOOGLE + 2FA ---
+
 export async function sendGoogleCode(code) {
-  console.log("Enviando código para o backend:", code);
+  console.log("Enviando código Google para backend...");
   try {
-    const res = await axios.post(`${API_BASE}/auth/google`, {
-      code,
-    });
-    console.log("Backend respondeu com dados de autenticação:", res.data);
+    const res = await axios.post(`${API_BASE}/auth/google`, { code });
+    // O backend pode retornar TokenOut (se for login direto) 
+    // OU { require_2fa: true, username: "..." } (se precisar de código)
     return res.data; 
   } catch (error) {
-    console.error("Falha ao enviar código do Google para o backend:", error);
+    console.error("Erro no Google Auth:", error);
     throw error;
   }
 }
+
+export async function verify2FA(username, code) {
+  try {
+    const res = await axios.post(`${API_BASE}/auth/verify-2fa`, {
+      username,
+      code
+    });
+    // Retorna o TokenOut final (token, keys, etc.)
+    return res.data; 
+  } catch (error) {
+    console.error("Erro na verificação 2FA:", error);
+    throw error;
+  }
+}
+
+// -----------------------------------------------
 
 export async function getUsers(token) {
   const res = await axios.get(`${API_BASE}/users`, {
     headers: { Authorization: `Bearer ${token}` },
   });
-  console.log("API getUsers response:", res.data); // Debug
   return res.data;
 }
 
@@ -73,7 +88,7 @@ export async function sendMessage(
   encrypted_session_key,
   sender_encrypted_session_key,
   iv,
-  integrity_hash // <--- NOVO ARGUMENTO
+  integrity_hash 
 ) {
   const res = await axios.post(
     `${API_BASE}/messages/send`,
@@ -83,7 +98,7 @@ export async function sendMessage(
       encrypted_session_key,
       sender_encrypted_session_key,
       iv,
-      integrity_hash, // <--- ENVIADO NO CORPO
+      integrity_hash, 
     },
     { headers: { Authorization: `Bearer ${token}` } }
   );
