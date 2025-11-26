@@ -36,17 +36,31 @@ export async function register(username, password) {
   }
 }
 
-// --- FUNÇÕES DE AUTENTICAÇÃO GOOGLE + 2FA ---
+// --- FUNÇÕES GOOGLE + 2FA ---
 
 export async function sendGoogleCode(code) {
   console.log("Enviando código Google para backend...");
   try {
     const res = await axios.post(`${API_BASE}/auth/google`, { code });
-    // O backend pode retornar TokenOut (se for login direto) 
-    // OU { require_2fa: true, username: "..." } (se precisar de código)
+    // Pode retornar { status: "REGISTRATION_REQUIRED", register_token: "..." }
+    // ou { status: "2FA_REQUIRED", username: "..." }
     return res.data; 
   } catch (error) {
     console.error("Erro no Google Auth:", error);
+    throw error;
+  }
+}
+
+// NOVA FUNÇÃO
+export async function completeRegistration(username, registerToken) {
+  try {
+    const res = await axios.post(`${API_BASE}/auth/google/complete-register`, {
+      username,
+      register_token: registerToken
+    });
+    return res.data; // Retorna status de 2FA
+  } catch (error) {
+    console.error("Erro ao completar registro:", error);
     throw error;
   }
 }
@@ -57,7 +71,6 @@ export async function verify2FA(username, code) {
       username,
       code
     });
-    // Retorna o TokenOut final (token, keys, etc.)
     return res.data; 
   } catch (error) {
     console.error("Erro na verificação 2FA:", error);
@@ -65,7 +78,7 @@ export async function verify2FA(username, code) {
   }
 }
 
-// -----------------------------------------------
+// -----------------------------
 
 export async function getUsers(token) {
   const res = await axios.get(`${API_BASE}/users`, {

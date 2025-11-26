@@ -1,10 +1,12 @@
 import { useState, useEffect } from "react";
-import { sendGoogleCode, verify2FA } from "./api";
+import { sendGoogleCode, verify2FA, completeRegistration } from "./api";
 import { useGoogleLogin } from "@react-oauth/google";
 
 export default function Login({ onAuth }) {
-  const [step, setStep] = useState("login"); // 'login' ou '2fa'
-  const [tempUsername, setTempUsername] = useState(""); // Guarda o email enquanto espera o codigo
+  const [step, setStep] = useState("login"); // 'login', 'register', '2fa'
+  const [tempUsername, setTempUsername] = useState(""); 
+  const [registerToken, setRegisterToken] = useState(""); // Token temporário para registro
+  const [newUsername, setNewUsername] = useState(""); // Input do novo usuário
   const [otpCode, setOtpCode] = useState("");
   const [busy, setBusy] = useState(false);
   const [notify, setNotify] = useState(null);
@@ -20,22 +22,18 @@ export default function Login({ onAuth }) {
     onSuccess: async (codeResponse) => {
       setBusy(true);
       try {
-        // Passo 1: Envia código do Google
         const data = await sendGoogleCode(codeResponse.code);
         
-        // Se o backend retornou que precisa de 2FA
-        if (data.require_2fa) {
+        if (data.status === "REGISTRATION_REQUIRED") {
+          // Usuário novo: vai para tela de escolha de nome
+          setRegisterToken(data.register_token);
+          setStep("register");
+          setNotify({ type: "success", text: "Google autenticado! Escolha seu usuário." });
+        } else if (data.status === "2FA_REQUIRED") {
+          // Usuário existente: vai para 2FA
           setTempUsername(data.username);
           setStep("2fa");
-          setNotify({ type: "success", text: `Código enviado para ${data.username}` });
-        } else {
-          // Caso o backend decida logar direto (ex: 2FA desativado ou opcional)
-          onAuth({
-            username: data.username,
-            token: data.token,
-            privateKey: data.private_key,
-            publicKey: data.public_key,
-          });
+          setNotify({ type: "success", text: `Código enviado para o e-mail.` });
         }
       } catch (e) {
         const msg = e?.response?.data?.detail || "Erro no login";
@@ -47,6 +45,30 @@ export default function Login({ onAuth }) {
     onError: () => setNotify({ type: "error", text: "Falha no Google Login" }),
   });
 
+  async function submitUsername() {
+    if (!newUsername.trim()) {
+      setNotify({ type: "error", text: "Digite um nome de usuário." });
+      return;
+    }
+    setBusy(true);
+    try {
+      // Envia o nome escolhido + o token que prova que é ele no Google
+      const data = await completeRegistration(newUsername.trim(), registerToken);
+      
+      // Se der certo, o backend já manda o código 2FA
+      if (data.status === "2FA_REQUIRED") {
+        setTempUsername(data.username);
+        setStep("2fa");
+        setNotify({ type: "success", text: "Conta criada! Código enviado para seu e-mail." });
+      }
+    } catch (e) {
+        const msg = e?.response?.data?.detail || "Erro ao criar conta";
+        setNotify({ type: "error", text: msg });
+    } finally {
+        setBusy(false);
+    }
+  }
+
   async function submitOTP() {
     if (otpCode.length !== 6) {
       setNotify({ type: "error", text: "Digite o código de 6 dígitos." });
@@ -54,10 +76,8 @@ export default function Login({ onAuth }) {
     }
     setBusy(true);
     try {
-      // Passo 2: Envia o código do E-mail para validação final
       const data = await verify2FA(tempUsername, otpCode);
       
-      // Sucesso! Recebemos o token e as chaves
       onAuth({
         username: data.username,
         token: data.token,
@@ -81,7 +101,7 @@ export default function Login({ onAuth }) {
             <div className="title" style={{ height: 2 }}></div>
             <div style={{ display: "flex", gap: 12, alignItems: "center", marginBottom: 20 }}>
               <h2 style={{ margin: 0, fontSize: 20, fontWeight: 800 }}>Acessar</h2>
-              <div style={{ color: "var(--muted)", fontSize: 13 }}>Mensagens seguras</div>
+              <div style={{ color: "var(--muted)", fontSize: 13 }}>Secure Chat v2.0</div>
             </div>
 
             <button 
@@ -91,6 +111,33 @@ export default function Login({ onAuth }) {
               style={{ width: '100%', marginTop: 16 }}
             >
               {busy ? "Conectando..." : "Entrar com Google"}
+            </button>
+          </>
+        )}
+
+        {step === "register" && (
+          <>
+            <div style={{ marginBottom: 20 }}>
+              <h2 style={{ margin: 0, fontSize: 20, fontWeight: 800 }}>Criar Conta</h2>
+              <div className="muted">Escolha como você será visto no chat</div>
+            </div>
+            
+            <div className="input" style={{ marginTop: 10 }}>
+              <input 
+                placeholder="Nome de Usuário"
+                value={newUsername}
+                onChange={e => setNewUsername(e.target.value)}
+                onKeyDown={(e) => e.key === "Enter" && submitUsername()}
+              />
+            </div>
+
+            <button 
+              className="primary" 
+              onClick={submitUsername} 
+              disabled={busy}
+              style={{ width: '100%', marginTop: 16 }}
+            >
+              {busy ? "Criar e Enviar Código" : "Continuar"}
             </button>
           </>
         )}
@@ -126,7 +173,7 @@ export default function Login({ onAuth }) {
               onClick={() => setStep("login")}
               style={{ marginTop: 10, fontSize: 12, width: '100%', border: 'none' }}
             >
-              Voltar
+              Cancelar
             </button>
           </>
         )}
