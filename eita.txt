@@ -1,0 +1,10 @@
+MONGO_URI=mongodb+srv://davi_db_user:davi123@seguranca.mmljrs6.mongodb.net/secure_chat_app?retryWrites=true&w=majority
+JWT_SECRET=umaChaveSecretaSuperSeguraParaProtegerOsTokens
+VAULT_SECRET=kkZNPSZ4c1SYb4HbsIrdVViv8NQLRussIugoEwi27B4=
+
+GOOGLE_CLIENT_ID="771702899193-cjc8uai5od6tjk1vne6d1qjbcidnl2jq.apps.googleusercontent.com"
+GOOGLE_CLIENT_SECRET="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"
+GOOGLE_REDIRECT_URI="postmessage"
+
+MAIL_USERNAME="beniciomozan11@gmail.com"
+MAIL_PASSWORD="gpii ddrv azlk hqhx"
