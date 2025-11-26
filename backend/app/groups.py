@@ -182,8 +182,9 @@ async def send_group_message(group_id: str, data: dict, sender: str = Depends(au
     encrypted_message = data.get("encrypted_message")
     iv = data.get("iv")
     key_version = data.get("key_version")
+    integrity_hash = data.get("integrity_hash")
 
-    if not all([encrypted_message, iv, key_version]):
+    if not all([encrypted_message, iv, key_version, integrity_hash]):
         raise HTTPException(400, "Payload incompleto")
 
     db = get_db()
@@ -202,6 +203,7 @@ async def send_group_message(group_id: str, data: dict, sender: str = Depends(au
         "encrypted_message": encrypted_message,
         "iv": iv,
         "key_version": key_version,
+        "integrity_hash": integrity_hash,
         "timestamp": datetime.utcnow()
     }
     result = db.group_messages.insert_one(msg_doc)
@@ -213,6 +215,7 @@ async def send_group_message(group_id: str, data: dict, sender: str = Depends(au
         "conversation_id": group_id,
         "msg_id": str(msg_id),
         "key_version": key_version,
+        "integrity_hash": integrity_hash,
     }
     if manager:
         await manager.broadcast(group["members"], payload)

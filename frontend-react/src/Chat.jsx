@@ -244,7 +244,16 @@ export default function Chat({ me, token, onLogout, privateKey, publicKey }) {
               if (userKey) {
                 try {
                   const sessionKey = await rsaDecrypt(decryptionKey, base64ToUint8(userKey.encrypted_key));
-                  
+
+                  // --- VERIFICAÇÃO DE INTEGRIDADE (HMAC) PARA GRUPOS ---
+                  if (h.integrity_hash) {
+                    const calculatedHash = generateHMAC(h.encrypted_message, h.iv, sessionKey);
+                    if (calculatedHash !== h.integrity_hash) {
+                      throw new Error("INTEGRITY_CHECK_FAILED");
+                    }
+                  }
+                  // ----------------------------------------------------
+
                   const plaintext = await blowfishDecrypt(base64ToUint8(h.encrypted_message), sessionKey, base64ToUint8(h.iv));
                   decryptedMessages.push({
                     id: `${h._id}`,
@@ -254,10 +263,14 @@ export default function Chat({ me, token, onLogout, privateKey, publicKey }) {
                     key_version: h.key_version,
                   });
                 } catch (e) {
+                  let errorMsg = "[Could not decrypt message]";
+                  if (e.message === "INTEGRITY_CHECK_FAILED") {
+                    errorMsg = "🚫 ALERTA: Mensagem adulterada ou corrompida!";
+                  }
                   decryptedMessages.push({
                     id: `${h._id}`,
                     sender_username: h.sender_username,
-                    plaintext: `[Could not decrypt message]`,
+                    plaintext: errorMsg,
                     ts: new Date(h.timestamp).getTime(),
                     error: true,
                   });
@@ -393,13 +406,21 @@ export default function Chat({ me, token, onLogout, privateKey, publicKey }) {
               base64ToUint8(userKey.encrypted_key)
             );
             const iv = generateRandomBytes(8);
+            const ivB64 = uint8ToBase64(iv);
             const encryptedMessageUint8 = await blowfishEncrypt(text, sessionKey, iv);
+            const encryptedMessageB64 = uint8ToBase64(encryptedMessageUint8);
+
+            // --- GERAÇÃO DO HASH DE INTEGRIDADE PARA GRUPO ---
+            const integrityHash = generateHMAC(encryptedMessageB64, ivB64, sessionKey);
+            // ------------------------------------------------
+
             await groupSend(
               token,
               activeGroup.id,
-              uint8ToBase64(encryptedMessageUint8),
-              uint8ToBase64(iv),
-              activeGroup.key_version
+              encryptedMessageB64,
+              ivB64,
+              activeGroup.key_version,
+              integrityHash
             );
           }
         }
@@ -597,6 +618,14 @@ export default function Chat({ me, token, onLogout, privateKey, publicKey }) {
                 decryptionKey,
                 base64ToUint8(userKey.encrypted_key)
               );
+              // --- VERIFICAÇÃO DE INTEGRIDADE (HMAC) PARA GRUPOS ---
+              if (h.integrity_hash) {
+                const calculatedHash = generateHMAC(h.encrypted_message, h.iv, sessionKey);
+                if (calculatedHash !== h.integrity_hash) {
+                  throw new Error("INTEGRITY_CHECK_FAILED");
+                }
+              }
+              // ----------------------------------------------------
               const plaintext = await blowfishDecrypt(
                 base64ToUint8(h.encrypted_message),
                 sessionKey,
@@ -611,10 +640,14 @@ export default function Chat({ me, token, onLogout, privateKey, publicKey }) {
               });
             } catch (e) {
               console.error("Failed to decrypt group message:", e);
+              let errorMsg = "[Could not decrypt message]";
+              if (e.message === "INTEGRITY_CHECK_FAILED") {
+                errorMsg = "🚫 ALERTA: Mensagem adulterada ou corrompida!";
+              }
               decryptedMessages.push({
                 id: `${h._id}`,
                 sender_username: h.sender_username,
-                plaintext: `[Could not decrypt message: ${e.message}]`,
+                plaintext: errorMsg,
                 ts: new Date(h.timestamp).getTime(),
                 error: true,
               });

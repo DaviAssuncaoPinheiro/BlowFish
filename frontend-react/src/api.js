@@ -164,10 +164,10 @@ export async function groupHistory(token, groupId) {
   return res.data;
 }
 
-export async function groupSend(token, groupId, encryptedMessage, iv, keyVersion) {
+export async function groupSend(token, groupId, encryptedMessage, iv, keyVersion, integrityHash) {
   const res = await axios.post(
     `${API_BASE}/groups/${groupId}/send`,
-    { encrypted_message: encryptedMessage, iv: iv, key_version: keyVersion },
+    { encrypted_message: encryptedMessage, iv: iv, key_version: keyVersion, integrity_hash: integrityHash },
     { headers: { Authorization: `Bearer ${token}` } }
   );
   return res.data;
